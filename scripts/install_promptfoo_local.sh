@@ -6,15 +6,10 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js >= 22.22.0 is required to install promptfoo@0.123.0."
-  exit 1
-fi
-
-if ! node -e 'const p=process.versions.node.split(".").map(Number); if (p[0]<22 || (p[0]===22 && p[1]<22)) process.exit(1)'; then
-  echo "promptfoo@0.123.0 requires Node.js >= 22.22.0 (found $(node -v))."
-  exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=require_node_22_22.sh
+source "${SCRIPT_DIR}/require_node_22_22.sh"
+require_node_22_22 "promptfoo@0.123.0" || exit 1
 
 NODE_TOOLS_ROOT="${NODE_TOOLS_ROOT:-${HOME}/.urt-tools}"
 PROMPTFOO_DIR="${PROMPTFOO_DIR:-${NODE_TOOLS_ROOT}/promptfoo}"

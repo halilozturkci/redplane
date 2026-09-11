@@ -24,15 +24,9 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js >= 22.22.0 is required for promptfoo@0.123.0."
-  exit 1
-fi
-
-if ! node -e 'const p=process.versions.node.split(".").map(Number); if (p[0]<22 || (p[0]===22 && p[1]<22)) process.exit(1)'; then
-  echo "promptfoo@0.123.0 requires Node.js >= 22.22.0 (found $(node -v))."
-  exit 1
-fi
+# shellcheck source=require_node_22_22.sh
+source "${SCRIPT_DIR}/require_node_22_22.sh"
+require_node_22_22 "promptfoo@0.123.0" || exit 1
 
 cd "${ROOT_DIR}"
 

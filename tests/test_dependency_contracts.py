@@ -51,14 +51,17 @@ def test_uv_lock_is_committed_and_omits_azure_ai_projects() -> None:
 
 def test_promptfoo_installer_pins_0_123_0_and_requires_node_22_22() -> None:
     script = (ROOT / "scripts" / "install_promptfoo_local.sh").read_text(encoding="utf-8")
+    helper = (ROOT / "scripts" / "require_node_22_22.sh").read_text(encoding="utf-8")
     assert 'PROMPTFOO_PACKAGE="${PROMPTFOO_PACKAGE:-promptfoo@0.123.0}"' in script
-    assert "22.22" in script
+    assert "require_node_22_22.sh" in script
+    assert "22.22" in helper
     assert "promptfoo@latest" not in script
     assert "Node.js 20+" not in script
 
 
 def test_bootstrap_requires_node_22_22() -> None:
     script = (ROOT / "scripts" / "bootstrap_uv.sh").read_text(encoding="utf-8")
+    assert "require_node_22_22.sh" in script
     assert "22.22" in script
     assert "Node.js 20+" not in script
 
