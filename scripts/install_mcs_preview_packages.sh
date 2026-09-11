@@ -15,6 +15,11 @@ if [[ "${URT_SKIP_MCS_PREVIEW:-0}" == "1" ]]; then
   exit 0
 fi
 
+if [[ "${URT_INSTALL_MCS_PREVIEW:-0}" != "1" ]]; then
+  echo "Skipping MCS preview package install (TestPyPI path is opt-in). Set URT_INSTALL_MCS_PREVIEW=1 to install."
+  exit 0
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is required to install MCS preview packages."
   exit 1

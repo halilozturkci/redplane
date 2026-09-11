@@ -2,13 +2,23 @@
 set -euo pipefail
 
 if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required to install promptfoo locally. Install Node.js 20+."
+  echo "npm is required to install promptfoo locally. Install Node.js >= 22.22.0."
+  exit 1
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js >= 22.22.0 is required to install promptfoo@0.123.0."
+  exit 1
+fi
+
+if ! node -e 'const p=process.versions.node.split(".").map(Number); if (p[0]<22 || (p[0]===22 && p[1]<22)) process.exit(1)'; then
+  echo "promptfoo@0.123.0 requires Node.js >= 22.22.0 (found $(node -v))."
   exit 1
 fi
 
 NODE_TOOLS_ROOT="${NODE_TOOLS_ROOT:-${HOME}/.urt-tools}"
 PROMPTFOO_DIR="${PROMPTFOO_DIR:-${NODE_TOOLS_ROOT}/promptfoo}"
-PROMPTFOO_PACKAGE="${PROMPTFOO_PACKAGE:-promptfoo@latest}"
+PROMPTFOO_PACKAGE="${PROMPTFOO_PACKAGE:-promptfoo@0.123.0}"
 PROMPTFOO_LINK_DIR="${PROMPTFOO_LINK_DIR:-${HOME}/.local/bin}"
 
 mkdir -p "${PROMPTFOO_DIR}"

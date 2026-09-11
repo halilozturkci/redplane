@@ -9,7 +9,7 @@ Set up Redplane on a consultant laptop so they can run manual attack-and-evaluat
 - macOS/Linux shell environment
 - Python 3.11+
 - `uv` installed
-- Node.js 20+ (`npm`, `npx`)
+- Node.js >= 22.22.0 (`npm`, `npx`) — required by `promptfoo@0.123.0`
 - Access credentials for target agents (Copilot Studio or Foundry)
 
 ## One-Time Setup
@@ -33,15 +33,15 @@ uv run urt validate --spec /tmp/urt_smoke.yaml
   - `powerpwn`
   - `deepteam`
   - `inspect-ai`
-- Promptfoo is installed locally (default: `~/.urt-tools/promptfoo`) and exposed as `promptfoo`
-- Microsoft Copilot Studio preview packages are installed by default via `scripts/install_mcs_preview_packages.sh`
+- Promptfoo is installed locally (default: `~/.urt-tools/promptfoo`, package `promptfoo@0.123.0`) and exposed as `promptfoo`
+- Microsoft Copilot Studio TestPyPI packages are **opt-in** via `URT_INSTALL_MCS_PREVIEW=1` (`scripts/install_mcs_preview_packages.sh`)
 - Power CAT is invoked with `npx` at runtime:
   - `@microsoft/copilot-studio-kit-cli`
 - Note: `@microsoft/copilot-studio-kit-cli` may require authenticated npm access in some environments.
 - Giskard is invoked with `uvx` runtime command (`uvx --python 3.12 --from giskard==2.19.1 python -c ...`) because the package does not expose a standalone `giskard` binary.
 
 This avoids dependency conflicts across engines (especially `pydantic` version conflicts).
-If your environment should skip preview dependencies, run bootstrap with `URT_SKIP_MCS_PREVIEW=1`.
+TestPyPI MCS packages are skipped unless you set `URT_INSTALL_MCS_PREVIEW=1`. `URT_SKIP_MCS_PREVIEW=1` still forces a skip.
 
 ## Recommended Run Flow
 

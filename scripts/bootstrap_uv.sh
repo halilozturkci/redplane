@@ -15,12 +15,22 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required for promptfoo local install and powercat runtime. Install Node.js 20+."
+  echo "npm is required for promptfoo local install and powercat runtime. Install Node.js >= 22.22.0."
   exit 1
 fi
 
 if ! command -v npx >/dev/null 2>&1; then
-  echo "npx is required for powercat engine. Install Node.js 20+."
+  echo "npx is required for powercat engine. Install Node.js >= 22.22.0."
+  exit 1
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js >= 22.22.0 is required for promptfoo@0.123.0."
+  exit 1
+fi
+
+if ! node -e 'const p=process.versions.node.split(".").map(Number); if (p[0]<22 || (p[0]===22 && p[1]<22)) process.exit(1)'; then
+  echo "promptfoo@0.123.0 requires Node.js >= 22.22.0 (found $(node -v))."
   exit 1
 fi
 
@@ -35,7 +45,7 @@ echo "[2/5] Installing Python engine CLIs with isolated uv tool environments"
 echo "[3/5] Installing promptfoo local binary"
 "${SCRIPT_DIR}/install_promptfoo_local.sh"
 
-echo "[4/5] Installing Microsoft Copilot Studio preview packages"
+echo "[4/5] Microsoft Copilot Studio preview packages (TestPyPI; opt-in via URT_INSTALL_MCS_PREVIEW=1)"
 "${SCRIPT_DIR}/install_mcs_preview_packages.sh"
 
 echo "[5/5] Verifying local toolchain"

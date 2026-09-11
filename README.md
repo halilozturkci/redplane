@@ -180,7 +180,7 @@ That is all you need to install dependencies, run the test suite, execute a run 
 
 **Optional — only for specific engines:**
 
-- Node.js `20+` with `npm` and `npx` — required by the `promptfoo` and `powercat` engines
+- Node.js `>= 22.22.0` with `npm` and `npx` — required by `promptfoo@0.123.0` and the `powercat` engine
 - npm access to `@microsoft/copilot-studio-kit-cli` — for the `powercat` (Power CAT) engine
 - The external engine CLIs themselves (Garak, DeepTeam, Giskard, Inspect, PowerPwn …) are installed on demand — see [Install](#install-uv-first). Engines you do not configure are never required.
 
@@ -189,6 +189,7 @@ That is all you need to install dependencies, run the test suite, execute a run 
 ```text
 .
 ├── pyproject.toml                 # uv-managed project (package: urt, entry point: urt)
+├── uv.lock                        # committed resolver lock (`uv sync --extra dev`)
 ├── scripts/
 │   ├── bootstrap_uv.sh            # full local bootstrap (deps + engine tools + checks)
 │   ├── install_engine_tools_uv.sh
@@ -252,19 +253,19 @@ For a full local setup — core runtime **plus** the external attack-engine CLIs
 ```
 
 Bootstrap does:
-- `uv sync` for the URT runtime
+- `uv sync` for the URT runtime (respects committed `uv.lock`)
 - `uv tool install` for the Python engine CLIs
-- local Promptfoo install under `~/.urt-tools/promptfoo`
-- Microsoft Copilot Studio preview package install into `.venv`
+- local Promptfoo install under `~/.urt-tools/promptfoo` (`promptfoo@0.123.0`, Node `>= 22.22.0`)
+- Microsoft Copilot Studio **TestPyPI** packages only when `URT_INSTALL_MCS_PREVIEW=1`
 - launcher verification for all engines
 - local state folder creation under `.urt_state/`
 
-> The bootstrap script requires Node.js (`npm`/`npx`) because it provisions the `promptfoo` and `powercat` engines. If you only need the core platform, use the [Quickstart](#quickstart-60-seconds) instead.
+> The bootstrap script requires Node.js `>= 22.22.0` (`npm`/`npx`) because it provisions `promptfoo@0.123.0` and the `powercat` engine. If you only need the core platform, use the [Quickstart](#quickstart-60-seconds) instead.
 
-If you must skip the Copilot Studio preview package install:
+TestPyPI MCS packages are **off by default** (`uv sync` will also prune unmanaged `uv pip` installs). To opt in:
 
 ```bash
-URT_SKIP_MCS_PREVIEW=1 ./scripts/bootstrap_uv.sh
+URT_INSTALL_MCS_PREVIEW=1 ./scripts/bootstrap_uv.sh
 ```
 
 ## CLI Commands
@@ -494,7 +495,7 @@ Params:
 | `disable_cache` | no | bool | `false` | sets `PROMPTFOO_CACHE_ENABLED=false`, `PROMPTFOO_CACHE_TYPE=memory` |
 | `disable_wal_mode` | no | bool | `false` | sets `PROMPTFOO_DISABLE_WAL_MODE=true` |
 | `config_dir` | no | string | none | sets `PROMPTFOO_CONFIG_DIR` |
-| `node_bin_dir` | no | string | none | prepends PATH (useful to pin Node 24) |
+| `node_bin_dir` | no | string | none | prepends PATH (optional; Node `>= 22.22.0` must be on that path) |
 | `working_dir` | no | string | none | command working directory |
 | `binary_path` | no | string | none | manual path to promptfoo binary |
 

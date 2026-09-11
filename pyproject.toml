@@ -17,10 +17,9 @@ dependencies = [
   "fastapi>=0.115.0",
   "uvicorn>=0.30.0",
   "PyYAML>=6.0.0",
-  "azure-ai-evaluation[redteam]>=1.0.1",
+  "azure-ai-evaluation[redteam]>=1.18.0",
   "azure-identity>=1.15.0",
-  "azure-ai-projects==1.0.0",
-  "openai>=1.0.0",
+  "openai>=2.2,<3",
   "python-dotenv>=1.0.0",
   "msal>=1.20.0",
   "msal-extensions>=1.0.0"
@@ -30,6 +29,10 @@ dependencies = [
 dev = [
   "pytest>=8.0.0"
 ]
+# Copilot Studio GA client pin lands in a follow-up slice. Declared now so
+# `uv sync --extra mcs` is a stable interface and TestPyPI is no longer the
+# default path onto the runtime venv.
+mcs = []
 
 [project.scripts]
 urt = "urt.cli:main"
