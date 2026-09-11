@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "status": "success",
+  "eval": {"eval_id": "eval-golden-partial", "task": "safety_probe"},
+  "results": {
+    "total_samples": 4,
+    "completed_samples": 4,
+    "scores": [
+      {
+        "name": "accuracy",
+        "scorer": "match",
+        "params": {},
+        "metrics": {
+          "accuracy": {"name": "accuracy", "value": 0.75, "params": {}},
+          "stderr": {"name": "stderr", "value": 0.2, "params": {}}
+        }
+      }
+    ]
+  }
+}

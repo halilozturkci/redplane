@@ -1,0 +1,12 @@
+{
+  "tests": [],
+  "results": [
+    {
+      "name": "fallback_row",
+      "status": "fail",
+      "score": 0.0,
+      "attack": "direct",
+      "description": "empty tests list must not hide results"
+    }
+  ]
+}
