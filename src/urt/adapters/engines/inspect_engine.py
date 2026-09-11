@@ -63,40 +63,115 @@ def _inspect_attack_vector(sample: dict[str, object]) -> str:
     return text[:200] if text else "scenario"
 
 
-def _inspect_cases_from_sample(sample: dict[str, object], index: int) -> list[dict[str, object]]:
-    sample_id = str(sample.get("id", sample.get("name", f"sample-{index}")))
-    attack = _inspect_attack_vector(sample)
+def _inspect_finding(
+    *,
+    run_id: str,
+    target_id: str,
+    idx: int,
+    category: str,
+    passed: bool,
+    score: float,
+    attack_vector: str,
+    complexity: object,
+    description: str,
+    raw: dict[str, object],
+) -> UnifiedFinding:
+    return UnifiedFinding(
+        finding_id=f"{run_id}:{target_id}:inspect:{idx}",
+        run_id=run_id,
+        target_id=target_id,
+        engine="inspect",
+        category=category,
+        sub_category="inspect_test",
+        severity="info" if passed else "medium",
+        confidence=min(max(score, 0.0), 1.0),
+        attack_vector=attack_vector,
+        attack_complexity=str(complexity if complexity is not None else "unknown"),
+        success=not passed,
+        description=description,
+        metadata={"raw": raw},
+    )
+
+
+def _finding_from_legacy_test(
+    *,
+    run_id: str,
+    target_id: str,
+    idx: int,
+    test: dict[str, object],
+) -> UnifiedFinding:
+    status = str(test.get("status", test.get("outcome", "unknown"))).lower()
+    passed = status in _PASS_STATUS
+    numeric = _as_number(test.get("score"))
+    score = numeric if numeric is not None else (1.0 if passed else 0.0)
+    category = str(test.get("category", test.get("name", "inspect_test")))
+    return _inspect_finding(
+        run_id=run_id,
+        target_id=target_id,
+        idx=idx,
+        category=category,
+        passed=passed,
+        score=score,
+        attack_vector=str(test.get("attack", test.get("technique", "scenario"))),
+        complexity=test.get("complexity", "unknown"),
+        description=str(test.get("description", f"Inspect test {category} {status}")),
+        raw=test,
+    )
+
+
+def _findings_from_sample(
+    *,
+    run_id: str,
+    target_id: str,
+    start_idx: int,
+    sample: dict[str, object],
+) -> list[UnifiedFinding]:
     scores = sample.get("scores")
+    attack = _inspect_attack_vector(sample)
     if isinstance(scores, dict) and scores:
-        cases: list[dict[str, object]] = []
-        for scorer_name, score_obj in scores.items():
+        findings: list[UnifiedFinding] = []
+        for offset, (scorer_name, score_obj) in enumerate(scores.items()):
             passed, value = _inspect_score_polarity(score_obj)
             explanation = ""
             if isinstance(score_obj, dict):
                 explanation = str(score_obj.get("explanation") or score_obj.get("answer") or "")
-            cases.append(
-                {
-                    "name": f"{sample_id}:{scorer_name}",
-                    "category": str(scorer_name),
-                    "status": "passed" if passed else "failed",
-                    "score": value,
-                    "description": explanation or attack,
-                    "attack": attack,
-                    "complexity": sample.get("complexity", "unknown"),
-                }
+            findings.append(
+                _inspect_finding(
+                    run_id=run_id,
+                    target_id=target_id,
+                    idx=start_idx + offset,
+                    category=str(scorer_name),
+                    passed=passed,
+                    score=value,
+                    attack_vector=attack,
+                    complexity=sample.get("complexity", "unknown"),
+                    description=explanation or attack,
+                    raw=sample,
+                )
             )
-        return cases
-    case = dict(sample)
-    case.setdefault("name", sample_id)
-    case.setdefault("attack", attack)
-    return [case]
+        return findings
+    if "status" in sample or "outcome" in sample or "score" in sample:
+        return [
+            _finding_from_legacy_test(
+                run_id=run_id,
+                target_id=target_id,
+                idx=start_idx,
+                test=sample,
+            )
+        ]
+    return []
 
 
-def _inspect_cases_from_results_object(results: dict[str, object]) -> list[dict[str, object]]:
+def _findings_from_results_object(
+    *,
+    run_id: str,
+    target_id: str,
+    results: dict[str, object],
+) -> list[UnifiedFinding]:
     scores = results.get("scores")
     if not isinstance(scores, list):
         return []
-    cases: list[dict[str, object]] = []
+    findings: list[UnifiedFinding] = []
     for block in scores:
         if not isinstance(block, dict):
             continue
@@ -120,49 +195,21 @@ def _inspect_cases_from_results_object(results: dict[str, object]) -> list[dict[
             else:
                 continue
         passed, value = _inspect_score_polarity(selected)
-        cases.append(
-            {
-                "name": selected_name,
-                "category": primary,
-                "status": "passed" if passed else "failed",
-                "score": value,
-                "description": f"Inspect metric {primary}/{selected_name}={value}",
-                "attack": "scenario",
-            }
+        findings.append(
+            _inspect_finding(
+                run_id=run_id,
+                target_id=target_id,
+                idx=len(findings),
+                category=primary,
+                passed=passed,
+                score=value,
+                attack_vector="scenario",
+                complexity="unknown",
+                description=f"Inspect metric {primary}/{selected_name}={value}",
+                raw=block,
+            )
         )
-    return cases
-
-
-def _iter_inspect_test_dicts(payload: object) -> list[dict[str, object]]:
-    """Unwrap Inspect EvalLog / legacy URT shapes into a list of test dicts.
-
-    Native EvalLog ``results`` is an object. Iterating it yields key strings,
-    which the previous parser skipped, producing silent zero findings.
-    """
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if not isinstance(payload, dict):
-        return []
-
-    tests = payload.get("tests")
-    if isinstance(tests, list):
-        return [item for item in tests if isinstance(item, dict)]
-
-    samples = payload.get("samples")
-    if isinstance(samples, list):
-        cases: list[dict[str, object]] = []
-        for idx, sample in enumerate(samples):
-            if isinstance(sample, dict):
-                cases.extend(_inspect_cases_from_sample(sample, idx))
-        if cases:
-            return cases
-
-    results = payload.get("results")
-    if isinstance(results, list):
-        return [item for item in results if isinstance(item, dict)]
-    if isinstance(results, dict):
-        return _inspect_cases_from_results_object(results)
-    return []
+    return findings
 
 
 class InspectEngineAdapter(CommandEngineAdapter):
@@ -228,34 +275,46 @@ class InspectEngineAdapter(CommandEngineAdapter):
                 )
             ]
 
-        tests = _iter_inspect_test_dicts(payload)
-        findings: list[UnifiedFinding] = []
-        for idx, test in enumerate(tests):
-            status = str(test.get("status", test.get("outcome", "unknown"))).lower()
-            passed = status in _PASS_STATUS
-            raw_score = test.get("score", 1.0 if passed else 0.0)
-            try:
-                score = float(raw_score or 0.0)
-            except (TypeError, ValueError):
-                score = 0.0
-            category = str(test.get("category", test.get("name", "inspect_test")))
-            attack_vector = str(test.get("attack", test.get("technique", "scenario")))
+        if isinstance(payload, list):
+            return [
+                _finding_from_legacy_test(run_id=run_id, target_id=target_id, idx=idx, test=item)
+                for idx, item in enumerate(payload)
+                if isinstance(item, dict)
+            ]
+        if not isinstance(payload, dict):
+            return []
 
-            findings.append(
-                UnifiedFinding(
-                    finding_id=f"{run_id}:{target_id}:inspect:{idx}",
-                    run_id=run_id,
-                    target_id=target_id,
-                    engine="inspect",
-                    category=category,
-                    sub_category="inspect_test",
-                    severity="info" if passed else "medium",
-                    confidence=min(max(score, 0.0), 1.0),
-                    attack_vector=attack_vector,
-                    attack_complexity=str(test.get("complexity", "unknown")),
-                    success=not passed,
-                    description=str(test.get("description", f"Inspect test {category} {status}")),
-                    metadata={"raw": test},
-                )
-            )
-        return findings
+        tests = payload.get("tests")
+        if isinstance(tests, list):
+            return [
+                _finding_from_legacy_test(run_id=run_id, target_id=target_id, idx=idx, test=item)
+                for idx, item in enumerate(tests)
+                if isinstance(item, dict)
+            ]
+
+        samples = payload.get("samples")
+        if isinstance(samples, list):
+            findings: list[UnifiedFinding] = []
+            for sample in samples:
+                if isinstance(sample, dict):
+                    findings.extend(
+                        _findings_from_sample(
+                            run_id=run_id,
+                            target_id=target_id,
+                            start_idx=len(findings),
+                            sample=sample,
+                        )
+                    )
+            if findings:
+                return findings
+
+        results = payload.get("results")
+        if isinstance(results, list):
+            return [
+                _finding_from_legacy_test(run_id=run_id, target_id=target_id, idx=idx, test=item)
+                for idx, item in enumerate(results)
+                if isinstance(item, dict)
+            ]
+        if isinstance(results, dict):
+            return _findings_from_results_object(run_id=run_id, target_id=target_id, results=results)
+        return []

@@ -156,10 +156,6 @@ class DeepTeamEngineAdapter(CommandEngineAdapter):
                 elif status in {"fail", "failed", "error", "vulnerable"}:
                     is_issue = True
             if is_issue is None:
-                passed_flag = record.get("passed")
-                if isinstance(passed_flag, bool):
-                    is_issue = not passed_flag
-            if is_issue is None:
                 error_text = record.get("error")
                 if error_text:
                     is_issue = False

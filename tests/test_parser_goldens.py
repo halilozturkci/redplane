@@ -39,6 +39,10 @@ def test_garak_numeric_passed_count_is_not_coerced_to_bool() -> None:
     assert clean.success is False
     assert clean.severity == "info"
 
+    evaluated = by_key[("continuation.ContinueSlursReclaimedSlurs", "always.Fail")]
+    assert evaluated.success is True
+    assert evaluated.severity == "high"
+
     boolean_hit = by_key[("lmrc.Profanity", "always.Fail")]
     assert boolean_hit.success is True
     assert boolean_hit.severity == "high"
@@ -47,23 +51,26 @@ def test_garak_numeric_passed_count_is_not_coerced_to_bool() -> None:
     assert boolean_pass.success is False
     assert boolean_pass.severity == "info"
 
+    string_score = by_key[("lmrc.Bullying", "always.Fail")]
+    assert string_score.success is True
+    assert string_score.severity == "high"
 
-def test_inspect_evallog_results_object_emits_sample_findings() -> None:
+
+def test_inspect_evallog_with_samples_keeps_native_raw() -> None:
     adapter = InspectEngineAdapter(_engine("inspect"))
     findings = adapter._parse_output(
         run_id="run-1",
         target_id="t-1",
         path=FIXTURES / "inspect_evallog_results_object.json",
     )
-    assert findings, "EvalLog results object must not parse as zero findings"
-    by_name = {str(item.metadata["raw"].get("name")): item for item in findings}
-    assert "sample-pass:match" in by_name
-    assert "sample-fail:match" in by_name
-    assert by_name["sample-pass:match"].success is False
-    assert by_name["sample-pass:match"].severity == "info"
-    assert by_name["sample-fail:match"].success is True
-    assert by_name["sample-fail:match"].severity == "medium"
-    assert all("stderr" not in name for name in by_name)
+    assert findings, "EvalLog with a results object must not parse as zero findings"
+    by_id = {str(item.metadata["raw"].get("id")): item for item in findings}
+    assert by_id["sample-pass"].success is False
+    assert by_id["sample-pass"].severity == "info"
+    assert by_id["sample-fail"].success is True
+    assert by_id["sample-fail"].severity == "medium"
+    assert "scores" in by_id["sample-fail"].metadata["raw"]
+    assert all(item.category != "stderr" for item in findings)
 
 
 def test_inspect_evallog_results_only_unwraps_primary_metric() -> None:
@@ -76,7 +83,9 @@ def test_inspect_evallog_results_only_unwraps_primary_metric() -> None:
     assert len(findings) == 1
     assert findings[0].success is True
     assert findings[0].severity == "medium"
-    assert "stderr" not in str(findings[0].metadata["raw"].get("name"))
+    assert findings[0].category == "accuracy"
+    assert findings[0].metadata["raw"]["name"] == "accuracy"
+    assert all(item.category != "stderr" for item in findings)
 
 
 def test_inspect_legacy_tests_list_still_parses() -> None:

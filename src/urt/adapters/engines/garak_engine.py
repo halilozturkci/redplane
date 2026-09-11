@@ -16,6 +16,11 @@ def _as_number(value: object) -> float | None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
     return None
 
 
@@ -41,7 +46,11 @@ def _garak_passed_and_score(payload: dict[str, object]) -> tuple[bool, float]:
     if passed_count is None:
         return score <= 0.0, score
 
-    total = _as_number(payload.get("total", payload.get("attempts")))
+    total = None
+    for key in ("total", "attempts", "total_evaluated"):
+        total = _as_number(payload.get(key))
+        if total is not None:
+            break
     if total is not None and total > 0:
         hit_rate = (total - passed_count) / total
         passed = passed_count >= total
