@@ -47,3 +47,24 @@
 ## Security & Configuration Tips
 - Never commit secrets or local runtime state (`.env`, token caches, `.urt_state/`, tool caches).
 - Use environment variables in specs (`${VAR_NAME}`) for credentials and endpoints.
+
+## Agent skills
+
+Project skills live in `.agents/skills/` (Cursor/Claude resolve the same tree via
+`.cursor/skills` and `.claude/skills`). Inventory: `docs/agents/imported-skills.md`.
+Read a skill's `SKILL.md` before using it.
+
+### Issue tracker
+
+Tickets and specs live in GitHub Issues on this repo. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical role strings map 1:1 onto GitHub labels. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CLAUDE.md` / `AGENTS.md`, optional root `CONTEXT.md` +
+`docs/adr/`. See `docs/agents/domain.md`.

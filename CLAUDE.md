@@ -98,3 +98,24 @@ The `.gitignore` excludes these generated/cached paths — do not commit them:
 - `fail_open: true` (default) means adapter errors don't fail the run; `false` makes them fatal.
 - Artifacts are written to `.urt_state/artifacts/<run_id>/` with a standard audit bundle (see `AUDIT_BUNDLE_FILES` in constants).
 - Environment variables in YAML configs are expanded via `os.path.expandvars()` — use `${VAR_NAME}` syntax.
+
+## Agent skills
+
+Project skills live in `.agents/skills/` (Cursor/Claude resolve the same tree via
+`.cursor/skills` and `.claude/skills`). Inventory: `docs/agents/imported-skills.md`.
+Read a skill's `SKILL.md` before using it.
+
+### Issue tracker
+
+Tickets and specs live in GitHub Issues on this repo. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical role strings map 1:1 onto GitHub labels. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CLAUDE.md` / `AGENTS.md`, optional root `CONTEXT.md` +
+`docs/adr/`. See `docs/agents/domain.md`.
