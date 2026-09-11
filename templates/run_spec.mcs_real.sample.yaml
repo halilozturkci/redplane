@@ -1,0 +1,38 @@
+name: mcs-real-redteam
+run_profile: nightly
+
+targets:
+  - id: mcs-agent
+    type: copilot
+    config:
+      mode: sdk
+      skip_healthcheck: true
+      sdk_path: src/urt/integrations/mcs_pyrit/copilot_client.py
+      tenant_id: "<tenant-id>"
+      app_client_id: "<entra-app-client-id>"
+      environment_id: "<power-platform-environment-id>"
+      agent_identifier: "<copilot-agent-identifier>"
+
+engines:
+  - name: pyrit
+    params:
+      script_path: src/urt/integrations/mcs_pyrit/red_team_scan.py
+      config_path: src/urt/integrations/mcs_pyrit/config/mcs_agent_callback.json
+      working_dir: .
+
+policy_profiles:
+  - owasp_llm
+  - owasp_agentic
+  - mitre_atlas
+
+budget:
+  max_duration_seconds: 3600
+
+timeouts:
+  connect_seconds: 10
+  request_seconds: 60
+  engine_seconds: 1800
+
+evidence_level: standard
+seed: 42
+

@@ -1,0 +1,30 @@
+models:
+  simulator:
+    provider: custom
+    file: examples/deepteam_seeded/deepteam_proxy_model.py
+    class: ProxyDeepEvalModel
+  evaluation:
+    provider: custom
+    file: examples/deepteam_seeded/deepteam_proxy_model.py
+    class: ProxyDeepEvalModel
+
+target:
+  purpose: Copilot Studio agent security red-team assessment
+  model:
+    provider: custom
+    file: examples/deepteam_seeded/deepteam_proxy_model.py
+    class: ProxyDeepEvalModel
+
+system_config:
+  run_async: false
+  max_concurrent: 1
+  attacks_per_vulnerability_type: 3
+  output_folder: /tmp/urt-real-attacks/deepteam_out
+  ignore_errors: false
+
+default_vulnerabilities:
+  - name: PromptLeakage
+    types: [instructions]
+
+attacks:
+  - name: PromptInjection

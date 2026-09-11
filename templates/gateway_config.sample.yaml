@@ -1,0 +1,97 @@
+gateway:
+  host: 127.0.0.1
+  port: 18080
+  request_timeout_seconds: 90
+  log_level: INFO
+  session_ttl_seconds: 300     # Session expiry in seconds (stateful backends)
+  # api_key: ${URT_GATEWAY_API_KEY}   # optional shared secret; healthz stays open
+  # session_persist_path: .urt_state/gateway/sessions.json  # Foundry thread_id reuse across restarts
+
+routing:
+  mode: header
+  header_name: X-URT-Target
+  model_prefix: urt/
+  default_target: mcs-agent
+  path_prefix: /v1/chat/completions/
+
+audit:
+  artifact_root: .urt_state/gateway
+  capture_bodies: true
+  max_body_bytes: 65536
+  redact_headers:
+    - authorization
+    - api-key
+    - x-api-key
+
+targets:
+  mcs-agent:
+    connector: copilot_studio_sdk
+    retry_attempts: 3              # Retry on transient 502/503/504 errors
+    retry_backoff_seconds: 1.0     # Seconds between retries (multiplied by attempt#)
+    config:
+      tenant_id: ${TENANT_ID}
+      app_client_id: ${APP_CLIENT_ID}
+      environment_id: ${ENVIRONMENT_ID}
+      agent_identifier: ${AGENT_IDENTIFIER}
+      inject_system_prompt: false  # When true, prepend system message to user prompt
+
+  foundry-model-prod:
+    connector: foundry_model_inference
+    config:
+      base_url: https://<foundry-host>.services.ai.azure.com
+      path: /models/chat/completions
+      api_version: 2024-05-01-preview
+      model: gpt-4.1-mini
+    auth:
+      api_key: ${FOUNDRY_MODEL_API_KEY}
+      api_key_header: api-key
+
+  foundry-agent-prod:
+    connector: foundry_agent_service
+    retry_attempts: 2              # Retry thread/message/run creation on transient errors
+    retry_backoff_seconds: 1.0
+    config:
+      base_url: https://<foundry-project-host>.services.ai.azure.com/agents/v1.0
+      assistant_id: ${FOUNDRY_AGENT_ID}
+      api_version: 2024-05-01-preview
+      run_timeout_seconds: 180
+      run_poll_interval_seconds: 1.0
+      paths:
+        create_thread: /threads
+        create_message: /threads/{thread_id}/messages
+        create_run: /threads/{thread_id}/runs
+        get_run: /threads/{thread_id}/runs/{run_id}
+        list_messages: /threads/{thread_id}/messages
+    auth:
+      bearer_token: ${FOUNDRY_AGENT_BEARER_TOKEN}
+
+  azure-openai-prod:
+    connector: azure_openai_deployment
+    config:
+      resource_url: https://<azure-openai-resource>.openai.azure.com
+      deployment: gpt-4o-mini
+      api_version: 2024-10-21
+      strip_model: true
+    auth:
+      api_key: ${AZURE_OPENAI_API_KEY}
+      api_key_header: api-key
+
+  ext-openai:
+    connector: openai_compatible_http
+    endpoint: https://api.openai-compatible.example.com/v1/chat/completions
+    config:
+      model: gpt-4.1-mini
+    auth:
+      bearer_token: ${EXT_OPENAI_TOKEN}
+
+  generic-http-agent:
+    connector: generic_http_json
+    endpoint: https://internal-agent.example.com/invoke
+    config:
+      method: POST
+      request_template:
+        mode: redteam
+    auth:
+      headers:
+        X-Client-Id: urt
+        Authorization: Bearer ${GENERIC_AGENT_TOKEN}

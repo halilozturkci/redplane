@@ -1,0 +1,70 @@
+name: mcs-agent-promptfoo-dataset-sample
+run_profile: nightly
+
+targets:
+  - id: mcs-agent
+    type: copilot
+    endpoint: http://127.0.0.1:18080/v1/chat/completions
+    config:
+      mode: http
+      skip_healthcheck: true
+      timeout_seconds: 90
+      retry_attempts: 2
+      retry_backoff_seconds: 1.0
+      retry_on_status: [429, 500, 502, 503, 504]
+
+engines:
+  - name: promptfoo
+    fail_open: false
+    params:
+      # Option A: built-in preset
+      prompt_source:
+        mode: preset
+        preset: copilot_security_starter
+        limit: 12
+        dedupe: true
+      # Other presets:
+      # jailbreakbench_starter, harmbench_starter, xstest_starter
+      # donotanswer_starter, beavertails_starter, aegis_starter
+      # bipia_indirect_injection_starter, cyberseceval_starter
+      # simplesafetytests_starter, agentic_tool_abuse_starter
+      # Option A2: preset profile (single parameter)
+      # prompt_source: profile:balanced
+      # prompt_source:
+      #   mode: profile
+      #   profile: agentic
+      #   per_preset_limit: 20
+
+      # Option B: your own file (JSONL/CSV/JSON/TXT/MD)
+      # prompt_source: /absolute/path/to/prompts.jsonl
+      # prompt_source:
+      #   mode: file
+      #   path: /absolute/path/to/prompts.csv
+      #   field: attack_prompt
+      #   limit: 50
+      #   dedupe: true
+
+      config_template_path: templates/promptfoo_eval.template.yaml
+      dataset_var: attack_prompt
+      dataset_field: attack_prompt
+      output_json: /tmp/urt-real-attacks/promptfoo_dataset_results.json
+      eval_args: "--no-progress-bar --max-concurrency 1"
+      disable_cache: true
+      disable_wal_mode: true
+      config_dir: /tmp/promptfoo-urt-runtime
+      node_bin_dir: /opt/homebrew/Cellar/node@24/24.13.1/bin
+
+policy_profiles:
+  - owasp_llm
+  - owasp_agentic
+  - mitre_atlas
+
+budget:
+  max_duration_seconds: 3600
+
+timeouts:
+  connect_seconds: 10
+  request_seconds: 60
+  engine_seconds: 1800
+
+evidence_level: standard

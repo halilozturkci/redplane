@@ -1,0 +1,416 @@
+"""URT command-line interface."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import uuid
+from pathlib import Path
+from typing import Any
+
+from .config import dump_run_spec, load_run_spec
+from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
+from .orchestrator import Orchestrator
+from .report import evaluate_gate, load_findings, render_csv, render_html, render_markdown
+from .gateway import load_gateway_config, serve_gateway
+from .gateway.config import GatewayConfigError
+
+
+def _template_payload() -> dict[str, Any]:
+    return {
+        "name": "foundry-copilot-nightly",
+        "run_profile": "nightly",
+        "targets": [
+            {
+                "id": "copilot-prod",
+                "type": "copilot",
+                "endpoint": "https://your-copilot-endpoint/api/chat",
+                "auth": {"headers": {"Authorization": "Bearer <token>"}},
+                "config": {"mode": "http", "skip_healthcheck": True},
+            },
+            {
+                "id": "foundry-agent",
+                "type": "foundry",
+                "endpoint": "https://your-foundry-endpoint/api/chat",
+                "auth": {"api_key": "<key>"},
+                "config": {"skip_healthcheck": True},
+            },
+            {
+                "id": "generic-agent",
+                "type": "http",
+                "endpoint": "http://localhost:8080/invoke",
+                "config": {
+                    "skip_healthcheck": True,
+                    "timeout_seconds": 60,
+                    "retry_attempts": 2,
+                    "retry_backoff_seconds": 1.0,
+                    "retry_on_status": [429, 500, 502, 503, 504],
+                },
+            },
+        ],
+        "engines": [
+            {
+                "name": "pyrit",
+                "params": {
+                    "script_path": "src/urt/integrations/mcs_pyrit/red_team_scan.py",
+                    "config_path": "src/urt/integrations/mcs_pyrit/config/mcs_agent_callback.json",
+                    "working_dir": ".",
+                },
+            },
+            {"name": "promptfoo", "params": {"command": "promptfoo --version"}},
+            {"name": "garak", "params": {"command": "uvx --from garak==0.14.0 garak --version"}},
+            {
+                "name": "powerpwn",
+                "params": {
+                    "mode": "recon-only",
+                    "command": "uvx --from powerpwn==6.0.0 powerpwn --help",
+                },
+            },
+            {"name": "powercat", "params": {"command": "npx -y @microsoft/copilot-studio-kit-cli --help"}},
+            {"name": "deepteam", "params": {"command": "uvx --from deepteam==1.0.6 deepteam --help"}},
+            {"name": "inspect", "params": {"command": "uvx --from inspect-ai==0.3.185 inspect --help"}},
+            {
+                "name": "giskard",
+                "params": {
+                    "command": 'uvx --python 3.12 --from giskard==2.19.1 python -c "import giskard; print(giskard.__version__)"'
+                },
+            },
+        ],
+        "evaluators": [
+            {
+                "name": "deepeval",
+                "metrics": ["answer_relevancy", "faithfulness", "toxicity"],
+                "params": {"command": "deepeval --help", "threshold": 0.5},
+                "fail_open": True,
+            },
+            {
+                "name": "promptfoo_eval",
+                "params": {"command": "promptfoo --version", "threshold": 0.5},
+                "fail_open": True,
+            },
+            {
+                "name": "giskard_eval",
+                "params": {"command": "giskard --help", "threshold": 0.5},
+                "fail_open": True,
+            },
+            {
+                "name": "inspect_eval",
+                "params": {"command": "inspect --help", "threshold": 0.5},
+                "fail_open": True,
+            },
+            {
+                "name": "azure_ai_eval",
+                "params": {"command": "python --version", "threshold": 0.5},
+                "fail_open": True,
+            },
+            {
+                "name": "custom_script",
+                "params": {"command": "python --version", "threshold": 0.5},
+                "fail_open": True,
+            },
+        ],
+        "policy_profiles": ["owasp_llm", "owasp_agentic", "mitre_atlas"],
+        "budget": {"max_duration_seconds": 3600},
+        "timeouts": {"connect_seconds": 10, "request_seconds": 60, "engine_seconds": 1800},
+        "evidence_level": "standard",
+        "seed": 42,
+    }
+
+
+def _orchestrator(args: argparse.Namespace) -> Orchestrator:
+    return Orchestrator(
+        artifact_root=args.artifact_root,
+        metadata_db=args.metadata_db,
+    )
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    payload = _template_payload()
+    dump_run_spec(args.output, payload)
+    print(f"Created run spec template at {args.output}")
+    return 0
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    spec = load_run_spec(args.spec)
+    print(json.dumps(spec.to_dict(), indent=2, ensure_ascii=False))
+    print("Validation OK")
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    spec = load_run_spec(args.spec)
+    orchestrator = _orchestrator(args)
+    result = orchestrator.execute(spec)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0 if result.get("status") == "completed" else 1
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    run = orchestrator.get_run(args.run_id)
+    if not run:
+        print(f"Run not found: {args.run_id}", file=sys.stderr)
+        return 1
+
+    scorecard_path = run.get("scorecard_path")
+    findings_path = run.get("findings_path")
+    if not scorecard_path or not findings_path:
+        print("Run does not contain scorecard/findings paths yet", file=sys.stderr)
+        return 1
+
+    scorecard = json.loads(Path(scorecard_path).read_text(encoding="utf-8"))
+    findings = json.loads(Path(findings_path).read_text(encoding="utf-8"))
+    markdown = render_markdown(scorecard, findings)
+    html = render_html(scorecard, findings)
+    csv_text = render_csv(findings)
+
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        md_path = output_dir / "report.md"
+        html_path = output_dir / "report.html"
+        csv_path = output_dir / "report.csv"
+        md_path.write_text(markdown, encoding="utf-8")
+        html_path.write_text(html, encoding="utf-8")
+        csv_path.write_text(csv_text, encoding="utf-8")
+        print(f"Report bundle written to {output_dir}")
+        return 0
+
+    if args.format == "md":
+        content = markdown
+    elif args.format == "html":
+        content = html
+    else:
+        content = csv_text
+
+    if args.output:
+        Path(args.output).write_text(content, encoding="utf-8")
+        print(f"Report written to {args.output}")
+    else:
+        print(content)
+    return 0
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    run = orchestrator.get_run(args.run_id)
+    if not run:
+        print(f"Run not found: {args.run_id}", file=sys.stderr)
+        return 1
+
+    findings_path = run.get("findings_path")
+    if not findings_path:
+        print("Run does not contain findings path", file=sys.stderr)
+        return 1
+
+    findings = load_findings(findings_path)
+    waivers: list[dict[str, Any]] = []
+    if not args.ignore_waivers:
+        waivers = orchestrator.list_waivers()
+    ok, message = evaluate_gate(findings, threshold=args.threshold, waivers=waivers)
+    print(message)
+    return 0 if ok else 2
+
+
+def cmd_runs(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    print(json.dumps(orchestrator.list_runs(), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_findings(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    print(json.dumps(orchestrator.get_findings(args.run_id), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_artifacts(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    print(json.dumps(orchestrator.list_artifacts(args.run_id), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    spec = load_run_spec(args.spec)
+    from .adapters import create_target_adapter
+
+    rows: list[dict[str, Any]] = []
+    exit_code = 0
+    for target in spec.targets:
+        adapter = create_target_adapter(target)
+        adapter.apply_runtime(
+            connect_seconds=spec.timeouts.connect_seconds,
+            request_seconds=spec.timeouts.request_seconds,
+        )
+        ok, detail = adapter.healthcheck()
+        rows.append(
+            {
+                "target_id": target.target_id,
+                "type": target.target_type,
+                "ok": ok,
+                "detail": detail,
+            }
+        )
+        if not ok:
+            exit_code = 2
+
+    print(json.dumps(rows, indent=2, ensure_ascii=False))
+    return exit_code
+
+
+def cmd_waivers_list(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    print(json.dumps(orchestrator.list_waivers(args.target_id), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_waivers_create(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    payload = {
+        "waiver_id": args.waiver_id or str(uuid.uuid4()),
+        "target_id": args.target_id,
+        "control_id": args.control_id,
+        "reason": args.reason,
+        "owner": args.owner,
+        "expires_at": args.expires_at,
+    }
+    created = orchestrator.create_waiver(payload)
+    print(json.dumps(created, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_serve_api(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print("uvicorn is required for API serving. Install dependencies first.", file=sys.stderr)
+        return 1
+
+    uvicorn.run(
+        "urt.api:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        factory=False,
+    )
+    return 0
+
+
+def cmd_serve_gateway(args: argparse.Namespace) -> int:
+    try:
+        config = load_gateway_config(args.config)
+    except (GatewayConfigError, FileNotFoundError, RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.host:
+        config.gateway.host = str(args.host)
+    if args.port is not None:
+        config.gateway.port = int(args.port)
+
+    if args.print_effective_config:
+        print(json.dumps(config.to_dict(), indent=2, ensure_ascii=False))
+
+    serve_gateway(config)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Redplane CLI (urt) — attack and evaluation control plane"
+    )
+    parser.add_argument("--artifact-root", default=DEFAULT_ARTIFACT_ROOT, help="Artifact output directory")
+    parser.add_argument("--metadata-db", default=DEFAULT_METADATA_DB, help="Metadata sqlite path")
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_init = sub.add_parser("init", help="Create a sample run spec")
+    p_init.add_argument("--output", default="run_spec.yaml", help="Output run spec path")
+    p_init.set_defaults(func=cmd_init)
+
+    p_validate = sub.add_parser("validate", help="Validate a run spec")
+    p_validate.add_argument("--spec", required=True, help="Run spec (.yaml/.json)")
+    p_validate.set_defaults(func=cmd_validate)
+
+    p_run = sub.add_parser("run", help="Execute run spec")
+    p_run.add_argument("--spec", required=True, help="Run spec (.yaml/.json)")
+    p_run.set_defaults(func=cmd_run)
+
+    p_report = sub.add_parser("report", help="Generate report for run")
+    p_report.add_argument("--run-id", required=True, help="Run ID")
+    p_report.add_argument("--output", help="Output report file")
+    p_report.add_argument("--format", default="md", choices=["md", "html", "csv"])
+    p_report.add_argument("--output-dir", help="Write report bundle (md/html/csv) into directory")
+    p_report.set_defaults(func=cmd_report)
+
+    p_gate = sub.add_parser("gate", help="Evaluate run against severity threshold")
+    p_gate.add_argument("--run-id", required=True, help="Run ID")
+    p_gate.add_argument("--threshold", default="high", choices=["critical", "high", "medium", "low", "info"])
+    p_gate.add_argument(
+        "--ignore-waivers",
+        action="store_true",
+        help="Ignore stored waivers when evaluating the gate",
+    )
+    p_gate.set_defaults(func=cmd_gate)
+
+    p_runs = sub.add_parser("runs", help="List runs")
+    p_runs.set_defaults(func=cmd_runs)
+
+    p_findings = sub.add_parser("findings", help="List normalized findings for run")
+    p_findings.add_argument("--run-id", required=True, help="Run ID")
+    p_findings.set_defaults(func=cmd_findings)
+
+    p_artifacts = sub.add_parser("artifacts", help="List artifacts for run")
+    p_artifacts.add_argument("--run-id", required=True, help="Run ID")
+    p_artifacts.set_defaults(func=cmd_artifacts)
+
+    p_probe = sub.add_parser("probe", help="Probe targets in run spec via healthchecks")
+    p_probe.add_argument("--spec", required=True, help="Run spec (.yaml/.json)")
+    p_probe.set_defaults(func=cmd_probe)
+
+    p_waivers = sub.add_parser("waivers", help="Create or list control waivers")
+    waiver_sub = p_waivers.add_subparsers(dest="waivers_command", required=True)
+    p_waivers_list = waiver_sub.add_parser("list", help="List waivers")
+    p_waivers_list.add_argument("--target-id", help="Filter by target id")
+    p_waivers_list.set_defaults(func=cmd_waivers_list)
+    p_waivers_create = waiver_sub.add_parser("create", help="Create a waiver")
+    p_waivers_create.add_argument("--target-id", required=True)
+    p_waivers_create.add_argument("--control-id", required=True)
+    p_waivers_create.add_argument("--reason", required=True)
+    p_waivers_create.add_argument("--owner", required=True)
+    p_waivers_create.add_argument("--expires-at", required=True, help="ISO-8601 expiry timestamp")
+    p_waivers_create.add_argument("--waiver-id", help="Optional stable waiver id")
+    p_waivers_create.set_defaults(func=cmd_waivers_create)
+
+    p_api = sub.add_parser("serve-api", help="Run REST API")
+    p_api.add_argument("--host", default="127.0.0.1")
+    p_api.add_argument("--port", type=int, default=8000)
+    p_api.add_argument("--reload", action="store_true")
+    p_api.set_defaults(func=cmd_serve_api)
+
+    p_gateway = sub.add_parser(
+        "serve-gateway", help="Run the OpenAI-compatible network gateway"
+    )
+    p_gateway.add_argument("--config", required=True, help="Gateway config (.yaml/.yml/.json)")
+    p_gateway.add_argument("--host", help="Override gateway host from config")
+    p_gateway.add_argument("--port", type=int, help="Override gateway port from config")
+    p_gateway.add_argument("--print-effective-config", action="store_true")
+    p_gateway.set_defaults(func=cmd_serve_gateway)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

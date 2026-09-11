@@ -1,0 +1,46 @@
+name: urt-promptfoo-gateway-sample
+run_profile: nightly
+
+targets:
+  - id: gateway-default
+    type: http
+    endpoint: http://127.0.0.1:18080/v1/chat/completions
+    config:
+      skip_healthcheck: true
+      timeout_seconds: 90
+      retry_attempts: 2
+      retry_backoff_seconds: 1.0
+      retry_on_status: [429, 500, 502, 503, 504]
+
+engines:
+  - name: promptfoo
+    fail_open: false
+    params:
+      prompt_source:
+        mode: preset
+        preset: copilot_security_starter
+        limit: 10
+        dedupe: true
+      config_template_path: templates/promptfoo_eval.template.yaml
+      dataset_var: attack_prompt
+      dataset_field: attack_prompt
+      output_json: /tmp/urt-gateway/promptfoo_results.json
+      eval_args: "--no-progress-bar --max-concurrency 1"
+      disable_cache: true
+      disable_wal_mode: true
+      config_dir: /tmp/promptfoo-urt-runtime
+
+policy_profiles:
+  - owasp_llm
+  - owasp_agentic
+  - mitre_atlas
+
+budget:
+  max_duration_seconds: 3600
+
+timeouts:
+  connect_seconds: 10
+  request_seconds: 60
+  engine_seconds: 1800
+
+evidence_level: standard

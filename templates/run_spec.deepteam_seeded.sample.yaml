@@ -1,0 +1,46 @@
+name: deepteam-seeded-real
+run_profile: nightly
+
+targets:
+  - id: copilot-real-agent
+    type: copilot
+    endpoint: https://example.invalid/copilot
+    config:
+      mode: http
+      skip_healthcheck: true
+      timeout_seconds: 60
+      retry_attempts: 2
+      retry_backoff_seconds: 1.0
+      retry_on_status: [429, 500, 502, 503, 504]
+
+engines:
+  - name: deepteam
+    fail_open: false
+    params:
+      command: >-
+        /bin/zsh -lc 'DEEPTEAM_SEED_DATASET=examples/deepteam_seeded/deepteam_seed_attacks.sample.json
+        DEEPTEAM_PROXY_URL=http://127.0.0.1:18080/v1/chat/completions
+        deepteam run examples/deepteam_seeded/deepteam_real.sample.yaml
+        --output-folder /tmp/urt-real-attacks/deepteam_out
+        --attacks-per-vuln 3 --max-concurrent 1
+        && python examples/deepteam_seeded/build_deepteam_results.py
+        --out-dir /tmp/urt-real-attacks/deepteam_out
+        --output /tmp/urt-real-attacks/deepteam_results.json'
+      output_json: /tmp/urt-real-attacks/deepteam_results.json
+      require_test_cases: true
+
+policy_profiles:
+  - owasp_llm
+  - owasp_agentic
+  - mitre_atlas
+
+budget:
+  max_duration_seconds: 7200
+
+timeouts:
+  connect_seconds: 10
+  request_seconds: 120
+  engine_seconds: 7200
+
+evidence_level: standard
+seed: 42

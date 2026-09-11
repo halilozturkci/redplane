@@ -1,0 +1,122 @@
+name: foundry-copilot-nightly
+run_profile: nightly
+
+targets:
+  - id: copilot-prod
+    type: copilot
+    endpoint: https://your-copilot-endpoint/api/chat
+    auth:
+      headers:
+        Authorization: "Bearer <token>"
+    config:
+      mode: http
+      skip_healthcheck: true
+
+  - id: foundry-agent
+    type: foundry
+    endpoint: https://your-foundry-endpoint/api/chat
+    auth:
+      api_key: "<api-key>"
+    config:
+      skip_healthcheck: true
+
+  - id: generic-agent
+    type: http
+    endpoint: http://localhost:8080/invoke
+    config:
+      skip_healthcheck: true
+      timeout_seconds: 60
+      retry_attempts: 2
+      retry_backoff_seconds: 1.0
+      retry_on_status: [429, 500, 502, 503, 504]
+
+engines:
+  - name: pyrit
+    params:
+      script_path: src/urt/integrations/mcs_pyrit/red_team_scan.py
+      config_path: src/urt/integrations/mcs_pyrit/config/mcs_agent_callback.json
+      working_dir: .
+
+  - name: promptfoo
+    params:
+      command: "promptfoo --version"
+
+  - name: garak
+    params:
+      command: "uvx --from garak==0.14.0 garak --version"
+
+  - name: powerpwn
+    params:
+      mode: recon-only
+      command: "uvx --from powerpwn==6.0.0 powerpwn --help"
+
+  - name: powercat
+    params:
+      command: "npx -y @microsoft/copilot-studio-kit-cli --help"
+
+  - name: deepteam
+    params:
+      command: "uvx --from deepteam==1.0.6 deepteam --help"
+      require_test_cases: true
+
+  - name: inspect
+    params:
+      command: "uvx --from inspect-ai==0.3.185 inspect --help"
+
+  - name: giskard
+    params:
+      command: 'uvx --python 3.12 --from giskard==2.19.1 python -c "import giskard; print(giskard.__version__)"'
+
+evaluators:
+  - name: deepeval
+    metrics: [answer_relevancy, faithfulness, toxicity]
+    params:
+      model: gpt-4.1-mini
+      threshold: 0.5
+      command: "deepeval test run"
+      output_json: /tmp/deepeval_results.json
+
+  - name: promptfoo_eval
+    params:
+      config_path: templates/promptfoo_eval.template.yaml
+      output_json: /tmp/promptfoo_eval_results.json
+
+  - name: azure_ai_eval
+    metrics: [groundedness, relevance, coherence, content_safety]
+    params:
+      script_path: scripts/run_azure_eval.py
+      output_json: /tmp/azure_eval_results.json
+      azure_project_endpoint: ${AZURE_PROJECT_ENDPOINT}
+
+  - name: giskard_eval
+    metrics: [hallucination, toxicity, robustness]
+    params:
+      command: "python -m giskard scan --output /tmp/giskard_scan.json"
+      output_json: /tmp/giskard_scan.json
+
+  - name: inspect_eval
+    params:
+      command: "inspect eval tasks/safety_eval.py --model openai/gpt-4.1-mini"
+      output_json: /tmp/inspect_eval_results.json
+      log_dir: /tmp/inspect_logs
+
+  - name: custom_script
+    params:
+      command: "python scripts/custom_eval.py --input findings.json --output /tmp/custom_scores.json"
+      output_json: /tmp/custom_scores.json
+
+policy_profiles:
+  - owasp_llm
+  - owasp_agentic
+  - mitre_atlas
+
+budget:
+  max_duration_seconds: 3600
+
+timeouts:
+  connect_seconds: 10
+  request_seconds: 60
+  engine_seconds: 1800
+
+evidence_level: standard
+seed: 42
