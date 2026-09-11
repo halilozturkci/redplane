@@ -88,7 +88,7 @@ The `.gitignore` excludes these generated/cached paths — do not commit them:
 - `*:Zone.Identifier` — Windows NTFS alternate data stream markers
 - `.DS_Store` — macOS Finder metadata
 
-`uv.lock` **is committed**. Regenerate it with `uv lock` after `pyproject.toml` changes; CI should run `uv lock --check`.
+`uv.lock` **is committed**. Regenerate it with `uv lock` after `pyproject.toml` changes; CI runs `uv lock --check` then `uv sync --extra dev --frozen`.
 
 ## Key Conventions
 
