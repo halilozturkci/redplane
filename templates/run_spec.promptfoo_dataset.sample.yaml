@@ -52,7 +52,8 @@ engines:
       disable_cache: true
       disable_wal_mode: true
       config_dir: /tmp/promptfoo-urt-runtime
-      node_bin_dir: /opt/homebrew/Cellar/node@24/24.13.1/bin
+      # Optional: prepend a Node >= 22.22.0 bin dir when it is not already on PATH.
+      # node_bin_dir: /usr/local/bin
 
 policy_profiles:
   - owasp_llm

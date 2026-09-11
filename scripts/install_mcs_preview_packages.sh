@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Gate before any filesystem side effects. TestPyPI MCS install is opt-in.
+if [[ "${URT_INSTALL_MCS_PREVIEW:-0}" != "1" ]]; then
+  echo "Skipping MCS preview package install (TestPyPI path is opt-in). Set URT_INSTALL_MCS_PREVIEW=1 to install."
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STATE_DIR="${ROOT_DIR}/.urt_state"
@@ -9,11 +15,6 @@ LOG_FILE="${LOG_DIR}/install_mcs_preview.log"
 
 mkdir -p "${LOG_DIR}"
 exec > >(tee -a "${LOG_FILE}") 2>&1
-
-if [[ "${URT_SKIP_MCS_PREVIEW:-0}" == "1" ]]; then
-  echo "Skipping MCS preview package install because URT_SKIP_MCS_PREVIEW=1"
-  exit 0
-fi
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is required to install MCS preview packages."
