@@ -1,0 +1,30 @@
+name: ci
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.0"
+      - name: Check lockfile
+        run: uv lock --check
+      - name: Install runtime and pytest
+        run: uv sync --extra dev
+      - name: Unit tests
+        run: uv run pytest
+      - name: Runtime import smoke
+        run: uv run python -c "import azure.ai.evaluation, azure.identity, openai, fastapi, yaml"
+      - name: CLI smoke
+        run: uv run urt --help
