@@ -14,6 +14,7 @@
 ## Build, Test, and Development Commands
 - `./scripts/bootstrap_uv.sh` — full local bootstrap (deps, engine tools, promptfoo, checks).
 - `uv sync` — install/update Python dependencies into the project environment.
+- `uv sync --extra mcs` — add the Copilot Studio GA client (`microsoft-agents-copilotstudio-client==1.5.0`). Full bootstrap already passes this extra.
 - `uv run urt --help` — verify CLI wiring and available subcommands.
 - `uv run urt validate --spec templates/run_spec.sample.yaml` — validate a run spec.
 - `uv run urt run --spec templates/run_spec.sample.yaml` — execute a red-team run.

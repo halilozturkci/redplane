@@ -31,19 +31,16 @@ require_urt_node || exit 1
 
 cd "${ROOT_DIR}"
 
-echo "[1/5] Syncing URT runtime with uv"
-uv sync
+echo "[1/4] Syncing URT runtime with uv (includes Copilot Studio GA extra)"
+uv sync --extra mcs
 
-echo "[2/5] Installing Python engine CLIs with isolated uv tool environments"
+echo "[2/4] Installing Python engine CLIs with isolated uv tool environments"
 "${SCRIPT_DIR}/install_engine_tools_uv.sh"
 
-echo "[3/5] Installing promptfoo local binary"
+echo "[3/4] Installing promptfoo local binary"
 "${SCRIPT_DIR}/install_promptfoo_local.sh"
 
-echo "[4/5] Microsoft Copilot Studio preview packages (TestPyPI; opt-in via URT_INSTALL_MCS_PREVIEW=1)"
-"${SCRIPT_DIR}/install_mcs_preview_packages.sh"
-
-echo "[5/5] Verifying local toolchain"
+echo "[4/4] Verifying local toolchain"
 "${SCRIPT_DIR}/verify_engine_tooling.sh"
 
 echo "Bootstrap completed."

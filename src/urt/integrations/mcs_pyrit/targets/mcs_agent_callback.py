@@ -2,7 +2,7 @@
 
 from typing import Optional, Dict, Any, Callable, List
 from dataclasses import dataclass
-from microsoft.agents.core.models import ActivityTypes
+from microsoft_agents.activity import ActivityTypes
 
 try:
     from urt.integrations.mcs_pyrit.copilot_client import (  # type: ignore

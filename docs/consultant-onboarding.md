@@ -34,14 +34,14 @@ uv run urt validate --spec /tmp/urt_smoke.yaml
   - `deepteam`
   - `inspect-ai`
 - Promptfoo is installed locally (default: `~/.urt-tools/promptfoo`, package `promptfoo@0.123.0`) and exposed as `promptfoo`
-- Microsoft Copilot Studio TestPyPI packages are **opt-in** via `URT_INSTALL_MCS_PREVIEW=1` (`scripts/install_mcs_preview_packages.sh`)
+- Copilot Studio SDK: `uv sync --extra mcs` (pins `microsoft-agents-copilotstudio-client==1.5.0` from PyPI)
 - Power CAT is invoked with `npx` at runtime:
   - `@microsoft/copilot-studio-kit-cli`
 - Note: `@microsoft/copilot-studio-kit-cli` may require authenticated npm access in some environments.
 - Giskard is invoked with `uvx` runtime command (`uvx --python 3.12 --from giskard==2.19.1 python -c ...`) because the package does not expose a standalone `giskard` binary.
 
 This avoids dependency conflicts across engines (especially `pydantic` version conflicts).
-TestPyPI MCS packages are skipped unless you set `URT_INSTALL_MCS_PREVIEW=1`.
+The Copilot Studio GA client is not in the base extra; install it with `uv sync --extra mcs`.
 
 ## Recommended Run Flow
 

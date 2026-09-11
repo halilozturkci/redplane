@@ -29,6 +29,9 @@ dependencies = [
 dev = [
   "pytest>=8.0.0"
 ]
+mcs = [
+  "microsoft-agents-copilotstudio-client==1.5.0"
+]
 
 [project.scripts]
 urt = "urt.cli:main"

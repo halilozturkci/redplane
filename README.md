@@ -194,7 +194,6 @@ That is all you need to install dependencies, run the test suite, execute a run 
 │   ├── bootstrap_uv.sh            # full local bootstrap (deps + engine tools + checks)
 │   ├── install_engine_tools_uv.sh
 │   ├── install_promptfoo_local.sh
-│   ├── install_mcs_preview_packages.sh
 │   ├── verify_engine_tooling.sh
 │   └── urt_gateway.py             # gateway launcher
 ├── src/urt/
@@ -253,19 +252,20 @@ For a full local setup — core runtime **plus** the external attack-engine CLIs
 ```
 
 Bootstrap does:
-- `uv sync` for the URT runtime (respects committed `uv.lock`)
+- `uv sync` for the URT runtime (respects committed `uv.lock`); bootstrap uses `--extra mcs` for the Copilot Studio GA client
 - `uv tool install` for the Python engine CLIs
 - local Promptfoo install under `~/.urt-tools/promptfoo` (`promptfoo@0.123.0`, Node `>= 22.22.0`)
-- Microsoft Copilot Studio **TestPyPI** packages only when `URT_INSTALL_MCS_PREVIEW=1`
 - launcher verification for all engines
 - local state folder creation under `.urt_state/`
 
 > The bootstrap script requires Node.js `>= 22.22.0` (`npm`/`npx`) because it provisions `promptfoo@0.123.0` and the `powercat` engine. If you only need the core platform, use the [Quickstart](#quickstart-60-seconds) instead.
 
-TestPyPI MCS packages are **off by default** (`uv sync` will also prune unmanaged `uv pip` installs). To opt in:
+Copilot Studio SDK mode needs the `mcs` extra (PyPI GA client `microsoft-agents-copilotstudio-client==1.5.0`):
 
 ```bash
-URT_INSTALL_MCS_PREVIEW=1 ./scripts/bootstrap_uv.sh
+uv sync --extra mcs
+# or, with pytest:
+uv sync --extra dev --extra mcs
 ```
 
 ## CLI Commands
