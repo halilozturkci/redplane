@@ -43,7 +43,7 @@ engines:
 
   - name: garak
     params:
-      command: "uvx --from garak==0.14.0 garak --version"
+      command: "uvx --from garak==0.17.0 garak --version"
 
   - name: powerpwn
     params:
@@ -56,16 +56,16 @@ engines:
 
   - name: deepteam
     params:
-      command: "uvx --from deepteam==1.0.6 deepteam --help"
+      command: "uvx --from deepteam==1.0.9 deepteam --help"
       require_test_cases: true
 
   - name: inspect
     params:
-      command: "uvx --from inspect-ai==0.3.185 inspect --help"
+      command: "uvx --from inspect-ai==0.3.263 inspect --help"
 
   - name: giskard
     params:
-      command: 'uvx --python 3.12 --from giskard==2.19.1 python -c "import giskard; print(giskard.__version__)"'
+      command: 'uvx --python 3.12 --from giskard==2.19.2 python -c "import giskard; print(giskard.__version__)"'
 
 evaluators:
   - name: deepeval

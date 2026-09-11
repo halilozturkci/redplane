@@ -495,7 +495,7 @@ Params:
 | `disable_cache` | no | bool | `false` | sets `PROMPTFOO_CACHE_ENABLED=false`, `PROMPTFOO_CACHE_TYPE=memory` |
 | `disable_wal_mode` | no | bool | `false` | sets `PROMPTFOO_DISABLE_WAL_MODE=true` |
 | `config_dir` | no | string | none | sets `PROMPTFOO_CONFIG_DIR` |
-| `node_bin_dir` | no | string | none | prepends PATH (optional; Node `>= 22.22.0` must be on that path) |
+| `node_bin_dir` | no | string | none | prepends PATH (Node.js >= 22.22.0; required by promptfoo 0.123.0) |
 | `working_dir` | no | string | none | command working directory |
 | `binary_path` | no | string | none | manual path to promptfoo binary |
 
@@ -787,7 +787,7 @@ engines:
   - name: inspect
     params:
       command: >-
-        uvx --from inspect-ai==0.3.185 inspect eval /tmp/urt-real-attacks/inspect_suite.py
+        uvx --from inspect-ai==0.3.263 inspect eval /tmp/urt-real-attacks/inspect_suite.py
         --json --output /tmp/urt-real-attacks/inspect_results.json
       output_json: /tmp/urt-real-attacks/inspect_results.json
 ```
@@ -817,7 +817,7 @@ engines:
   - name: giskard
     params:
       command: >-
-        uvx --python 3.12 --from giskard==2.19.1 python
+        uvx --python 3.12 --from giskard==2.19.2 python
         /tmp/urt-real-attacks/giskard_real_scan.py
       output_json: /tmp/urt-real-attacks/giskard_results.json
 ```
@@ -1110,7 +1110,7 @@ engines:
 
   - name: deepteam
     params:
-      command: "uvx --from deepteam==1.0.6 deepteam run --config config.json"
+      command: "uvx --from deepteam==1.0.9 deepteam run --config config.json"
       require_test_cases: true
 
 evaluators:
