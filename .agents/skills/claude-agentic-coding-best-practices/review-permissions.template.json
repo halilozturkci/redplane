@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Shell(git:diff*)",
+      "Shell(git:log*)",
+      "Shell(git:show*)",
+      "Shell(git:status*)",
+      "Shell(ls)",
+      "Shell(cat)",
+      "Shell(grep)",
+      "Shell(rg)",
+      "Shell(find)",
+      "Shell(head)",
+      "Shell(tail)",
+      "Shell(wc)",
+      "Shell(sed:-n*)"
+    ],
+    "deny": [
+      "Write(**)",
+      "Shell(rm)",
+      "Shell(mv)",
+      "Shell(cp)",
+      "Shell(chmod)",
+      "Shell(chown)",
+      "Shell(curl)",
+      "Shell(wget)",
+      "Shell(gh)",
+      "Shell(npm)",
+      "Shell(npx)",
+      "Shell(node)",
+      "Shell(python)",
+      "Shell(python3)",
+      "Shell(bash)",
+      "Shell(sh)",
+      "Shell(zsh)",
+      "Read(.env*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/secrets/**)"
+    ]
+  }
+}
