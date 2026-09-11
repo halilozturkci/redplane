@@ -11,6 +11,11 @@ for cmd in uv npx garak powerpwn deepteam inspect; do
   fi
 done
 
+if ! uv run python -c "import microsoft_agents.copilotstudio.client" >/dev/null 2>&1; then
+  echo "MISSING: microsoft_agents.copilotstudio.client (run: uv sync --extra mcs)"
+  MISSING=1
+fi
+
 if [[ "${MISSING}" -ne 0 ]]; then
   echo "One or more required commands are missing."
   exit 1
@@ -51,10 +56,10 @@ else
   echo "Power CAT CLI check: WARN (npm package unavailable/private and github fallback also failed)"
 fi
 
-if uv run --extra mcs python -c "import microsoft_agents.copilotstudio.client" >/dev/null 2>&1; then
-  echo "MCS GA extra check: OK (microsoft-agents-copilotstudio-client)"
-else
-  echo "MCS GA extra check: WARN (run: uv sync --extra mcs)"
+if ! uv run python -c "import microsoft_agents.copilotstudio.client" >/dev/null 2>&1; then
+  echo "MISSING: microsoft_agents.copilotstudio.client (run: uv sync --extra mcs)"
+  exit 1
 fi
+echo "OK: microsoft_agents.copilotstudio.client"
 
 echo "All engine launchers are operational."

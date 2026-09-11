@@ -11,7 +11,6 @@ import logging
 from msal import PublicClientApplication
 from msal_extensions import build_encrypted_persistence, FilePersistence, PersistedTokenCache
 
-#from microsoft.agents.copilotstudio.client import ConnectionSettings, CopilotClient, PowerPlatformCloud, AgentType
 from microsoft_agents.copilotstudio.client import (
     ConnectionSettings,
     CopilotClient,

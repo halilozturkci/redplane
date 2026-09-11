@@ -1,20 +1,16 @@
-"""Copilot Studio GA extra is optional; skip when it is not synced."""
+"""Copilot Studio GA extra is optional for core pytest; skip when not synced."""
 
 from __future__ import annotations
 
 import pytest
 
 
-def test_microsoft_agents_copilotstudio_client_imports() -> None:
+def test_mcs_integration_modules_import() -> None:
     pytest.importorskip("microsoft_agents.copilotstudio.client")
-    from microsoft_agents.copilotstudio.client import (
-        AgentType,
-        ConnectionSettings,
-        CopilotClient,
-        PowerPlatformCloud,
-    )
+    pytest.importorskip("microsoft_agents.activity")
+    from urt.integrations.mcs_pyrit import copilot_client
+    from urt.integrations.mcs_pyrit.targets import mcs_agent_callback
 
-    assert ConnectionSettings is not None
-    assert CopilotClient is not None
-    assert PowerPlatformCloud is not None
-    assert AgentType is not None
+    assert callable(copilot_client.McsCopilotClient)
+    assert mcs_agent_callback.ActivityTypes.message == "message"
+    assert mcs_agent_callback.ActivityTypes.__module__.startswith("microsoft_agents")

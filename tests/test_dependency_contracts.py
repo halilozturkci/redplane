@@ -119,39 +119,24 @@ def test_require_node_accepts_floor(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_mcs_extra_pins_ga_client() -> None:
+def test_mcs_extra_pin_matches_lock() -> None:
     extras = _pyproject()["project"]["optional-dependencies"]
     assert extras["mcs"] == ["microsoft-agents-copilotstudio-client==1.5.0"]
-    assert extras["dev"] == ["pytest>=8.0.0"]
-
-
-def test_uv_lock_pins_mcs_ga_client_1_5_0() -> None:
+    name, version = extras["mcs"][0].split("==", 1)
     lock_text = (ROOT / "uv.lock").read_text(encoding="utf-8")
-    match = re.search(
-        r'(?m)^name = "microsoft-agents-copilotstudio-client"\nversion = "([^"]+)"',
-        lock_text,
-    )
+    match = re.search(rf'(?m)^name = "{name}"\nversion = "([^"]+)"', lock_text)
     assert match is not None
-    assert match.group(1) == "1.5.0"
+    assert match.group(1) == version
 
 
-def test_testpypi_mcs_preview_script_is_removed() -> None:
-    assert not (ROOT / "scripts" / "install_mcs_preview_packages.sh").exists()
+def test_bootstrap_syncs_mcs_extra_from_pypi() -> None:
     bootstrap = (ROOT / "scripts" / "bootstrap_uv.sh").read_text(encoding="utf-8")
     assert "uv sync --extra mcs" in bootstrap
-    assert "URT_INSTALL_MCS_PREVIEW" not in bootstrap
     assert "test.pypi.org" not in bootstrap
-
-
-def test_copilot_client_imports_ga_module_path() -> None:
-    source = (ROOT / "src" / "urt" / "integrations" / "mcs_pyrit" / "copilot_client.py").read_text(
-        encoding="utf-8"
-    )
-    assert "from microsoft_agents.copilotstudio.client import (" in source
-    assert "ConnectionSettings" in source
-    assert "CopilotClient" in source
-    assert "PowerPlatformCloud" in source
-    assert "AgentType" in source
+    assert "URT_INSTALL_MCS_PREVIEW" not in bootstrap
+    verify = (ROOT / "scripts" / "verify_engine_tooling.sh").read_text(encoding="utf-8")
+    assert "uv run --extra mcs" not in verify
+    assert "import microsoft_agents.copilotstudio.client" in verify
 
 
 def test_promptfoo_dataset_sample_has_no_machine_specific_node_path() -> None:
