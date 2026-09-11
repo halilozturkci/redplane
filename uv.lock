@@ -1334,6 +1334,49 @@ wheels = [
 ]
 
 [[package]]
+name = "microsoft-agents-activity"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/5c/370c14728752bc51e275ae2aebf6b53e5f912dcebb948171a4623e1162db/microsoft_agents_activity-1.5.0.tar.gz", hash = "sha256:62e61ace7e2dc56e8c9dab01e1d6a1a43f15c971f460cb8ec6d0f4c39a237051", size = 73821, upload-time = "2026-08-26T17:59:10.296Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/00/94ad407c74b376489d7eb68e23d182969d7f4ce4bcc8a0d34456362f6caf/microsoft_agents_activity-1.5.0-py3-none-any.whl", hash = "sha256:48106d8493dc50f906ccc0fad0320de9d97ceaff2079b7f69fbf712d622a1dc3", size = 149534, upload-time = "2026-08-26T17:59:26.261Z" },
+]
+
+[[package]]
+name = "microsoft-agents-copilotstudio-client"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "microsoft-agents-hosting-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/f7/178746f16369115de70b9f7866999bc73232f6fcfcf9e2bb25c93e0007dc/microsoft_agents_copilotstudio_client-1.5.0.tar.gz", hash = "sha256:5652fe192074d4cec60fbdc660b4693f48dbf5098ab8c2cc9030a0333a90bfa6", size = 28828, upload-time = "2026-08-26T17:59:14.183Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/b1/783333cb3ae52b08f4dcdf609e7201bcec5c3fb120c74539ddd5ede8d49e/microsoft_agents_copilotstudio_client-1.5.0-py3-none-any.whl", hash = "sha256:ae129f12fcbcaf8bbbf84fe5b4245da15ceed0b8c73630d42d8609c278db65f4", size = 24254, upload-time = "2026-08-26T17:59:29.695Z" },
+]
+
+[[package]]
+name = "microsoft-agents-hosting-core"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "isodate" },
+    { name = "microsoft-agents-activity" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "pyjwt" },
+    { name = "python-dotenv" },
+    { name = "yarl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d8/a6/fe2d57024a564d4d208f81fd92a8d3ba094c5a35e4dbd4c2178f2b9cdc63/microsoft_agents_hosting_core-1.5.0.tar.gz", hash = "sha256:0da57557aef6512bfa6c0092a8d8f297afd46b4009bdaca2387c0b8765360b90", size = 155944, upload-time = "2026-08-26T17:59:16.318Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/ec/acbc564beb967918daa09e7c87237c158bd16f328029a69716272935cc46/microsoft_agents_hosting_core-1.5.0-py3-none-any.whl", hash = "sha256:07304c6fdd23efe31dcedbef89d3f9220096f881d379dab1e5d6c6f73904b032", size = 228528, upload-time = "2026-08-26T17:59:31.867Z" },
+]
+
+[[package]]
 name = "msal"
 version = "1.38.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1767,6 +1810,45 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
+name = "opentelemetry-api"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ee/8b/aa9e2d8b8dfa7c946f7dec5d1f8f6ba8eca062f43509a06bdb5ce93d26c0/opentelemetry_api-1.44.0.tar.gz", hash = "sha256:67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a", size = 72406, upload-time = "2026-07-16T15:25:32.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/6f/a04e900f465ff3221ccc395522503e2d10e79fa21f2723c8e177aae1e0d1/opentelemetry_api-1.44.0-py3-none-any.whl", hash = "sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef", size = 60018, upload-time = "2026-07-16T15:25:11.657Z" },
+]
+
+[[package]]
+name = "opentelemetry-sdk"
+version = "1.44.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/77/a6592cbc7c8d9bcc9d6757a9df45e04a7c585e3e6e7a13456da522b21109/opentelemetry_sdk-1.44.0.tar.gz", hash = "sha256:cebe7f65dc12f26ead75c6064de12fd2a9052e5060c0272d402cfa203aae123b", size = 208624, upload-time = "2026-07-16T15:25:46.078Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/23/ff077e61886ee020a17ce9c8b6fa11c601c8d8345b09ea24f605445df62a/opentelemetry_sdk-1.44.0-py3-none-any.whl", hash = "sha256:df081c4c6bcfdb1211e3e86140376792643128a25f8d72d1d27675936e7e96ad", size = 137221, upload-time = "2026-07-16T15:25:29.534Z" },
+]
+
+[[package]]
+name = "opentelemetry-semantic-conventions"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/73/0cbdebcb4cf545fdd328da14f5137e37d0770c3f26185e478b0d15d94f50/opentelemetry_semantic_conventions-0.65b0.tar.gz", hash = "sha256:f9b2b81e9d5b64f11bc952075e7e9c7fb0aab075c7fd1c46d597f1b919852d60", size = 148774, upload-time = "2026-07-16T15:25:46.902Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/0e/49df70d9b81fb5cbae4bbf2a49d865b09bcbcbc4eb53f5851b1027738d78/opentelemetry_semantic_conventions-0.65b0-py3-none-any.whl", hash = "sha256:1cacde7b0ad306f84c5ef08c3dbe1bbaf20165bba6f8bff43b670e555a086bcb", size = 204645, upload-time = "2026-07-16T15:25:30.688Z" },
 ]
 
 [[package]]
@@ -2462,12 +2544,16 @@ dependencies = [
 dev = [
     { name = "pytest" },
 ]
+mcs = [
+    { name = "microsoft-agents-copilotstudio-client" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "azure-ai-evaluation", extras = ["redteam"], specifier = ">=1.18.0" },
     { name = "azure-identity", specifier = ">=1.15.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "microsoft-agents-copilotstudio-client", marker = "extra == 'mcs'", specifier = "==1.5.0" },
     { name = "msal", specifier = ">=1.20.0" },
     { name = "msal-extensions", specifier = ">=1.0.0" },
     { name = "openai", specifier = ">=2.2,<3" },
@@ -2476,7 +2562,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "mcs"]
 
 [[package]]
 name = "regex"

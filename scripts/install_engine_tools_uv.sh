@@ -25,6 +25,6 @@ done
 
 echo "Python engine CLIs installed."
 echo "Promptfoo local binary is installed by scripts/install_promptfoo_local.sh."
-echo "MCS preview dependencies are installed by scripts/install_mcs_preview_packages.sh."
+echo "MCS GA client is installed with: uv sync --extra mcs"
 echo "Power CAT CLI runs via npx at runtime (@microsoft/copilot-studio-kit-cli)."
 echo "Giskard is launched via uvx runtime command because the package does not publish a standalone CLI binary."

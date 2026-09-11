@@ -51,12 +51,6 @@ def test_azure_ai_evaluation_floor_includes_redteam_extra() -> None:
     assert matches == ["azure-ai-evaluation[redteam]>=1.18.0"]
 
 
-def test_mcs_extra_is_not_declared_empty() -> None:
-    extras = _pyproject()["project"]["optional-dependencies"]
-    assert "mcs" not in extras
-    assert extras["dev"] == ["pytest>=8.0.0"]
-
-
 def test_uv_lock_is_committed_with_openai_2x() -> None:
     lock_path = ROOT / "uv.lock"
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -125,24 +119,39 @@ def test_require_node_accepts_floor(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_mcs_preview_install_is_opt_in_before_logging() -> None:
-    script = (ROOT / "scripts" / "install_mcs_preview_packages.sh").read_text(encoding="utf-8")
-    assert script.find("URT_INSTALL_MCS_PREVIEW") < script.find("mkdir")
-    assert "URT_SKIP_MCS_PREVIEW" not in script
-    env = os.environ.copy()
-    env.pop("URT_INSTALL_MCS_PREVIEW", None)
-    result = subprocess.run(
-        ["bash", str(ROOT / "scripts" / "install_mcs_preview_packages.sh")],
-        check=False,
-        capture_output=True,
-        text=True,
-        cwd=str(ROOT),
-        env=env,
+def test_mcs_extra_pins_ga_client() -> None:
+    extras = _pyproject()["project"]["optional-dependencies"]
+    assert extras["mcs"] == ["microsoft-agents-copilotstudio-client==1.5.0"]
+    assert extras["dev"] == ["pytest>=8.0.0"]
+
+
+def test_uv_lock_pins_mcs_ga_client_1_5_0() -> None:
+    lock_text = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    match = re.search(
+        r'(?m)^name = "microsoft-agents-copilotstudio-client"\nversion = "([^"]+)"',
+        lock_text,
     )
-    assert result.returncode == 0
-    combined = f"{result.stdout}\n{result.stderr}"
-    assert "URT_INSTALL_MCS_PREVIEW" in combined
-    assert "Installing Microsoft Copilot Studio preview packages" not in result.stdout
+    assert match is not None
+    assert match.group(1) == "1.5.0"
+
+
+def test_testpypi_mcs_preview_script_is_removed() -> None:
+    assert not (ROOT / "scripts" / "install_mcs_preview_packages.sh").exists()
+    bootstrap = (ROOT / "scripts" / "bootstrap_uv.sh").read_text(encoding="utf-8")
+    assert "uv sync --extra mcs" in bootstrap
+    assert "URT_INSTALL_MCS_PREVIEW" not in bootstrap
+    assert "test.pypi.org" not in bootstrap
+
+
+def test_copilot_client_imports_ga_module_path() -> None:
+    source = (ROOT / "src" / "urt" / "integrations" / "mcs_pyrit" / "copilot_client.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from microsoft_agents.copilotstudio.client import (" in source
+    assert "ConnectionSettings" in source
+    assert "CopilotClient" in source
+    assert "PowerPlatformCloud" in source
+    assert "AgentType" in source
 
 
 def test_promptfoo_dataset_sample_has_no_machine_specific_node_path() -> None:

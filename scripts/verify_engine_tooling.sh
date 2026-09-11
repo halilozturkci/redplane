@@ -51,10 +51,10 @@ else
   echo "Power CAT CLI check: WARN (npm package unavailable/private and github fallback also failed)"
 fi
 
-if uv run python -c "import microsoft_agents.copilotstudio.client" >/dev/null 2>&1; then
-  echo "MCS preview packages check: OK"
+if uv run --extra mcs python -c "import microsoft_agents.copilotstudio.client" >/dev/null 2>&1; then
+  echo "MCS GA extra check: OK (microsoft-agents-copilotstudio-client)"
 else
-  echo "MCS preview packages check: WARN (not installed or unavailable in current environment)"
+  echo "MCS GA extra check: WARN (run: uv sync --extra mcs)"
 fi
 
 echo "All engine launchers are operational."
