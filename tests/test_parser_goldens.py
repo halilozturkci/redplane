@@ -88,6 +88,30 @@ def test_inspect_evallog_results_only_unwraps_primary_metric() -> None:
     assert all(item.category != "stderr" for item in findings)
 
 
+def test_inspect_aggregate_accuracy_below_one_is_a_finding() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_evallog_aggregate_partial.json",
+    )
+    assert len(findings) == 1
+    assert findings[0].success is True
+    assert findings[0].severity == "medium"
+
+
+def test_inspect_empty_tests_list_falls_back_to_results() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_empty_tests_with_results.json",
+    )
+    assert len(findings) == 1
+    assert findings[0].category == "fallback_row"
+    assert findings[0].success is True
+
+
 def test_inspect_legacy_tests_list_still_parses() -> None:
     adapter = InspectEngineAdapter(_engine("inspect"))
     findings = adapter._parse_output(

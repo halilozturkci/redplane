@@ -194,7 +194,10 @@ def _findings_from_results_object(
                 selected = block
             else:
                 continue
-        passed, value = _inspect_score_polarity(selected)
+        _, value = _inspect_score_polarity(selected)
+        # Aggregate metrics are rates. A value below 1.0 means some samples
+        # failed; the per-sample >= 0.5 threshold would hide that.
+        passed = value >= 1.0
         findings.append(
             _inspect_finding(
                 run_id=run_id,
@@ -285,7 +288,7 @@ class InspectEngineAdapter(CommandEngineAdapter):
             return []
 
         tests = payload.get("tests")
-        if isinstance(tests, list):
+        if isinstance(tests, list) and tests:
             return [
                 _finding_from_legacy_test(run_id=run_id, target_id=target_id, idx=idx, test=item)
                 for idx, item in enumerate(tests)
