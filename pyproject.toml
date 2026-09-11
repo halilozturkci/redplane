@@ -29,10 +29,6 @@ dependencies = [
 dev = [
   "pytest>=8.0.0"
 ]
-# Copilot Studio GA client pin lands in a follow-up slice. Declared now so
-# `uv sync --extra mcs` is a stable interface and TestPyPI is no longer the
-# default path onto the runtime venv.
-mcs = []
 
 [project.scripts]
 urt = "urt.cli:main"

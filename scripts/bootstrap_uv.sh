@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STATE_DIR="${ROOT_DIR}/.urt_state"
 LOG_DIR="${STATE_DIR}/logs"
 
+# shellcheck source=require_node.sh
+source "${SCRIPT_DIR}/require_node.sh"
+
 mkdir -p "${LOG_DIR}" "${STATE_DIR}/artifacts" "${STATE_DIR}/metadata"
 exec > >(tee -a "${LOG_DIR}/bootstrap.log") 2>&1
 
@@ -15,18 +18,16 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required for promptfoo local install and powercat runtime. Install Node.js >= 22.22.0."
+  echo "npm is required for promptfoo local install and powercat runtime. Install Node.js >= ${URT_NODE_MIN}."
   exit 1
 fi
 
 if ! command -v npx >/dev/null 2>&1; then
-  echo "npx is required for powercat engine. Install Node.js >= 22.22.0."
+  echo "npx is required for powercat engine. Install Node.js >= ${URT_NODE_MIN}."
   exit 1
 fi
 
-# shellcheck source=require_node_22_22.sh
-source "${SCRIPT_DIR}/require_node_22_22.sh"
-require_node_22_22 "promptfoo@0.123.0" || exit 1
+require_urt_node || exit 1
 
 cd "${ROOT_DIR}"
 

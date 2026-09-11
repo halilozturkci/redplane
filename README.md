@@ -180,7 +180,7 @@ That is all you need to install dependencies, run the test suite, execute a run 
 
 **Optional — only for specific engines:**
 
-- Node.js `>= 22.22.0` with `npm` and `npx` — required by `promptfoo@0.123.0` and the `powercat` engine
+- Node.js `>= 22.22.0` with `npm` and `npx` — required by `promptfoo@0.123.0` (Power CAT only needs `npx`)
 - npm access to `@microsoft/copilot-studio-kit-cli` — for the `powercat` (Power CAT) engine
 - The external engine CLIs themselves (Garak, DeepTeam, Giskard, Inspect, PowerPwn …) are installed on demand — see [Install](#install-uv-first). Engines you do not configure are never required.
 

@@ -9,6 +9,7 @@
 - Tests are in `tests/` (unit-focused, no external services required).
 - Operational scripts are in `scripts/` (`bootstrap_uv.sh`, tooling installers, gateway launcher).
 - Specs and examples live in `templates/`, `examples/`, and supporting docs in `docs/`.
+- `uv.lock` is committed. Promptfoo is `promptfoo@0.123.0` and requires Node.js `>= 22.22.0` (`scripts/toolchain_pins.env`).
 
 ## Build, Test, and Development Commands
 - `./scripts/bootstrap_uv.sh` — full local bootstrap (deps, engine tools, promptfoo, checks).

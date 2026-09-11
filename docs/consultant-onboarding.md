@@ -41,7 +41,7 @@ uv run urt validate --spec /tmp/urt_smoke.yaml
 - Giskard is invoked with `uvx` runtime command (`uvx --python 3.12 --from giskard==2.19.1 python -c ...`) because the package does not expose a standalone `giskard` binary.
 
 This avoids dependency conflicts across engines (especially `pydantic` version conflicts).
-TestPyPI MCS packages are skipped unless you set `URT_INSTALL_MCS_PREVIEW=1`. `URT_SKIP_MCS_PREVIEW=1` still forces a skip.
+TestPyPI MCS packages are skipped unless you set `URT_INSTALL_MCS_PREVIEW=1`.
 
 ## Recommended Run Flow
 

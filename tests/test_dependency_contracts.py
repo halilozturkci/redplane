@@ -3,19 +3,38 @@
 from __future__ import annotations
 
 import os
+import re
+import stat
 import subprocess
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _pyproject() -> dict:
+    import tomllib
+
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
 def _runtime_deps() -> list[str]:
     return list(_pyproject()["project"]["dependencies"])
+
+
+def _pins() -> dict[str, str]:
+    pins: dict[str, str] = {}
+    for line in (ROOT / "scripts" / "toolchain_pins.env").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        pins[key] = value
+    return pins
+
+
+def _write_fake_node(path: Path, version: str) -> None:
+    path.write_text(f"#!/bin/sh\necho v{version}\n", encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
 def test_runtime_does_not_depend_on_azure_ai_projects() -> None:
@@ -32,45 +51,86 @@ def test_azure_ai_evaluation_floor_includes_redteam_extra() -> None:
     assert matches == ["azure-ai-evaluation[redteam]>=1.18.0"]
 
 
-def test_mcs_extra_is_declared_for_follow_up_pin() -> None:
+def test_mcs_extra_is_not_declared_empty() -> None:
     extras = _pyproject()["project"]["optional-dependencies"]
-    assert "mcs" in extras
-    assert extras["mcs"] == []
-    assert "pytest>=8.0.0" in extras["dev"]
+    assert "mcs" not in extras
+    assert extras["dev"] == ["pytest>=8.0.0"]
 
 
-def test_uv_lock_is_committed_and_omits_azure_ai_projects() -> None:
+def test_uv_lock_is_committed_with_openai_2x() -> None:
     lock_path = ROOT / "uv.lock"
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert lock_path.is_file(), "uv.lock must be committed"
     assert "\nuv.lock\n" not in f"\n{gitignore}"
     lock_text = lock_path.read_text(encoding="utf-8")
     assert "azure-ai-projects" not in lock_text
-    assert 'name = "openai"' in lock_text
+    match = re.search(r'(?m)^name = "openai"\nversion = "([^"]+)"', lock_text)
+    assert match is not None
+    assert match.group(1).startswith("2."), match.group(1)
 
 
-def test_promptfoo_installer_pins_0_123_0_and_requires_node_22_22() -> None:
+def test_toolchain_pins_are_node_22_22_and_promptfoo_0_123_0() -> None:
+    pins = _pins()
+    assert pins["URT_NODE_MIN"] == "22.22.0"
+    assert pins["URT_PROMPTFOO_PACKAGE"] == "promptfoo@0.123.0"
+
+
+def test_promptfoo_installer_uses_shared_pins() -> None:
     script = (ROOT / "scripts" / "install_promptfoo_local.sh").read_text(encoding="utf-8")
-    helper = (ROOT / "scripts" / "require_node_22_22.sh").read_text(encoding="utf-8")
-    assert 'PROMPTFOO_PACKAGE="${PROMPTFOO_PACKAGE:-promptfoo@0.123.0}"' in script
-    assert "require_node_22_22.sh" in script
-    assert "22.22" in helper
+    assert "require_node.sh" in script
+    assert "URT_PROMPTFOO_PACKAGE" in script
     assert "promptfoo@latest" not in script
     assert "Node.js 20+" not in script
 
 
-def test_bootstrap_requires_node_22_22() -> None:
+def test_bootstrap_uses_shared_node_gate() -> None:
     script = (ROOT / "scripts" / "bootstrap_uv.sh").read_text(encoding="utf-8")
-    assert "require_node_22_22.sh" in script
-    assert "22.22" in script
+    assert "require_node.sh" in script
+    assert "require_urt_node" in script
     assert "Node.js 20+" not in script
 
 
-def test_mcs_preview_install_is_opt_in(tmp_path: Path) -> None:
+def test_require_node_rejects_below_floor(tmp_path: Path) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _write_fake_node(bindir / "node", "22.14.0")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", "-c", f"source '{ROOT / 'scripts' / 'require_node.sh'}' && require_urt_node"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 1
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "22.14.0" in combined
+    assert "22.22.0" in combined
+
+
+def test_require_node_accepts_floor(tmp_path: Path) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _write_fake_node(bindir / "node", "22.22.0")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", "-c", f"source '{ROOT / 'scripts' / 'require_node.sh'}' && require_urt_node"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mcs_preview_install_is_opt_in_before_logging() -> None:
+    script = (ROOT / "scripts" / "install_mcs_preview_packages.sh").read_text(encoding="utf-8")
+    assert script.find("URT_INSTALL_MCS_PREVIEW") < script.find("mkdir")
+    assert "URT_SKIP_MCS_PREVIEW" not in script
     env = os.environ.copy()
     env.pop("URT_INSTALL_MCS_PREVIEW", None)
-    env.pop("URT_SKIP_MCS_PREVIEW", None)
-    env["HOME"] = str(tmp_path)
     result = subprocess.run(
         ["bash", str(ROOT / "scripts" / "install_mcs_preview_packages.sh")],
         check=False,
@@ -81,7 +141,7 @@ def test_mcs_preview_install_is_opt_in(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     combined = f"{result.stdout}\n{result.stderr}"
-    assert "opt-in" in combined.lower() or "URT_INSTALL_MCS_PREVIEW" in combined
+    assert "URT_INSTALL_MCS_PREVIEW" in combined
     assert "Installing Microsoft Copilot Studio preview packages" not in result.stdout
 
 

@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=require_node.sh
+source "${SCRIPT_DIR}/require_node.sh"
+
 if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required to install promptfoo locally. Install Node.js >= 22.22.0."
+  echo "npm is required to install promptfoo locally. Install Node.js >= ${URT_NODE_MIN}."
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=require_node_22_22.sh
-source "${SCRIPT_DIR}/require_node_22_22.sh"
-require_node_22_22 "promptfoo@0.123.0" || exit 1
+require_urt_node || exit 1
 
 NODE_TOOLS_ROOT="${NODE_TOOLS_ROOT:-${HOME}/.urt-tools}"
 PROMPTFOO_DIR="${PROMPTFOO_DIR:-${NODE_TOOLS_ROOT}/promptfoo}"
-PROMPTFOO_PACKAGE="${PROMPTFOO_PACKAGE:-promptfoo@0.123.0}"
+PROMPTFOO_PACKAGE="${PROMPTFOO_PACKAGE:-${URT_PROMPTFOO_PACKAGE}}"
 PROMPTFOO_LINK_DIR="${PROMPTFOO_LINK_DIR:-${HOME}/.local/bin}"
 
 mkdir -p "${PROMPTFOO_DIR}"
