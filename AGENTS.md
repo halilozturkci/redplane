@@ -19,7 +19,7 @@
 - `uv run urt run --spec templates/run_spec.sample.yaml` — execute a red-team run.
 - `uv run urt serve-gateway --config templates/gateway_config.sample.yaml` — start gateway.
 - `uv run pytest` — run the full test suite.
-- CI on pull requests and `main`: `uv lock --check`, `uv sync --extra dev`, pytest, runtime import smoke, `uv run urt --help`.
+- CI on pull requests and `main`: Node floor check, `uv lock --check`, `uv sync --extra dev --frozen`, pytest, `uv run urt --help`.
 - `uv run pytest tests/test_models.py -k runspec` — run focused tests during iteration.
 
 ## Coding Style & Naming Conventions
