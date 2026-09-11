@@ -11,6 +11,7 @@ from typing import Any
 
 from .config import dump_run_spec, load_run_spec
 from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
+from .engine_pins import pin
 from .orchestrator import Orchestrator
 from .report import evaluate_gate, load_findings, render_csv, render_html, render_markdown
 from .gateway import load_gateway_config, serve_gateway
@@ -59,22 +60,20 @@ def _template_payload() -> dict[str, Any]:
                 },
             },
             {"name": "promptfoo", "params": {"command": "promptfoo --version"}},
-            {"name": "garak", "params": {"command": "uvx --from garak==0.14.0 garak --version"}},
+            {"name": "garak", "params": {"command": pin("garak").uvx_command}},
             {
                 "name": "powerpwn",
                 "params": {
                     "mode": "recon-only",
-                    "command": "uvx --from powerpwn==6.0.0 powerpwn --help",
+                    "command": pin("powerpwn").uvx_command,
                 },
             },
             {"name": "powercat", "params": {"command": "npx -y @microsoft/copilot-studio-kit-cli --help"}},
-            {"name": "deepteam", "params": {"command": "uvx --from deepteam==1.0.6 deepteam --help"}},
-            {"name": "inspect", "params": {"command": "uvx --from inspect-ai==0.3.185 inspect --help"}},
+            {"name": "deepteam", "params": {"command": pin("deepteam").uvx_command}},
+            {"name": "inspect", "params": {"command": pin("inspect-ai").uvx_command}},
             {
                 "name": "giskard",
-                "params": {
-                    "command": 'uvx --python 3.12 --from giskard==2.19.1 python -c "import giskard; print(giskard.__version__)"'
-                },
+                "params": {"command": pin("giskard").uvx_command},
             },
         ],
         "evaluators": [

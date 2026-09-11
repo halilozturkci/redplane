@@ -38,7 +38,7 @@ uv run urt validate --spec /tmp/urt_smoke.yaml
 - Power CAT is invoked with `npx` at runtime:
   - `@microsoft/copilot-studio-kit-cli`
 - Note: `@microsoft/copilot-studio-kit-cli` may require authenticated npm access in some environments.
-- Giskard is invoked with `uvx` runtime command (`uvx --python 3.12 --from giskard==2.19.1 python -c ...`) because the package does not expose a standalone `giskard` binary.
+- Giskard is invoked with `uvx` runtime command (`uvx --python 3.12 --from giskard==2.19.2 python -c ...`) because the package does not expose a standalone `giskard` binary.
 
 This avoids dependency conflicts across engines (especially `pydantic` version conflicts).
 The Copilot Studio GA client is not in the base extra; install it with `uv sync --extra mcs`.

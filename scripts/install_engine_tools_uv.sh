@@ -7,10 +7,10 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 TOOLS=(
-  "garak==0.14.0|3.12"
+  "garak==0.17.0|3.12"
   "powerpwn==6.0.0|3.11"
-  "deepteam==1.0.6|3.12"
-  "inspect-ai==0.3.185|3.12"
+  "deepteam==1.0.9|3.12"
+  "inspect-ai==0.3.263|3.12"
 )
 
 GLOBAL_TOOL_PYTHON="${TOOL_PYTHON:-}"

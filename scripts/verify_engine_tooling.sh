@@ -39,11 +39,13 @@ echo "Checking URT entrypoint"
 uv run urt --help >/dev/null
 
 echo "Running engine smoke commands"
+# uv tool pins must match src/urt/engine_pins.py:
+# garak==0.17.0 powerpwn==6.0.0 deepteam==1.0.9 inspect-ai==0.3.263
 garak --version >/dev/null
 powerpwn --help >/dev/null
 deepteam --help >/dev/null
 inspect --help >/dev/null
-uvx --python 3.12 --from giskard==2.19.1 python -c "import giskard; print(giskard.__version__)" >/dev/null
+uvx --python 3.12 --from giskard==2.19.2 python -c "import giskard; print(giskard.__version__)" >/dev/null
 "${PROMPTFOO_BIN}" --version >/dev/null
 
 if npx -y @microsoft/copilot-studio-kit-cli --help >/dev/null 2>&1; then
