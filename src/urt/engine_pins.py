@@ -2,7 +2,7 @@
 
 Bash installers keep their own literals (bootstrap cannot import ``urt``).
 Tests require those literals to equal this table. Do not enable the
-inspect-ai ``dev`` extra (it pulls openai 3). Hold giskard 3.x.
+inspect-ai ``dev`` extra (kitchen-sink; optional ``openai>=3.1``).
 """
 
 from __future__ import annotations

@@ -95,6 +95,7 @@ The `.gitignore` excludes these generated/cached paths — do not commit them:
 
 - **Python >= 3.11** required. Uses `uv` as package manager (not pip/poetry).
 - Promptfoo is pinned to `0.123.0` and requires **Node.js >= 22.22.0**.
+- Runtime pins `openai>=3,<4` and `pyrit>=1.1,<2`. `azure-ai-evaluation` is installed **without** the `[redteam]` extra (that extra hard-pins pyrit 0.11).
 - Source layout: `src/urt/` with `pyproject.toml` at repo root.
 - All dataclasses use `slots=True` and `from_dict()`/`to_dict()` pattern.
 - Engines/evaluators wrap external CLI tools via subprocess — they never import the tool's Python package directly.
