@@ -52,7 +52,9 @@ engines:
 
   - name: powercat
     params:
-      command: "npx -y @microsoft/copilot-studio-kit-cli --help"
+      # No public npm CLI. Local launcher from the Copilot Studio Kit:
+      # https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit
+      command: "copilot-studio-kit agent-review run"
 
   - name: deepteam
     params:

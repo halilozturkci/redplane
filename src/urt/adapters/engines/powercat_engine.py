@@ -6,7 +6,15 @@ import shlex
 from pathlib import Path
 
 from ..engine_base import EngineContext
-from ...types import UnifiedFinding
+from ...powercat_kit import (
+    DEFAULT_COMMAND,
+    DEPRECATED_NPM_PACKAGE,
+    GITHUB_REPO,
+    package_not_found_reason,
+    skip_reason_for_command,
+    skip_reason_missing_launcher,
+)
+from ...types import EngineRunResult, UnifiedFinding
 from ._command import CommandEngineAdapter
 
 
@@ -20,24 +28,23 @@ class PowerCatEngineAdapter(CommandEngineAdapter):
     def run(self, context: EngineContext):
         command = self.spec.params.get("command")
         if not command:
-            command = ["copilot-studio-kit", "agent-review", "run"]
+            command = DEFAULT_COMMAND
 
         if isinstance(command, str):
             command_list = shlex.split(command)
         else:
             command_list = [str(part) for part in command]
 
+        skip_reason = skip_reason_for_command(command_list)
+        if skip_reason:
+            return self._kit_unavailable_result(context, skip_reason)
+
         launcher = command_list[0]
         if not self._command_exists(launcher):
-            # fallback for npm package invocation when native CLI is absent
-            if launcher != "copilot-studio-kit":
-                return self._skipped_result(
-                    context,
-                    f"powercat command launcher not found in PATH: {launcher}",
-                )
-            if not self._command_exists("npx"):
-                return self._skipped_result(context, "copilot-studio-kit or npx not found in PATH")
-            command_list = ["npx", "@microsoft/copilot-studio-kit-cli", *command_list[1:]]
+            return self._kit_unavailable_result(
+                context,
+                skip_reason_missing_launcher(launcher),
+            )
 
         result = self._result_from_command(
             context,
@@ -96,6 +103,39 @@ class PowerCatEngineAdapter(CommandEngineAdapter):
 
         return result
 
+    def _kit_unavailable_result(self, context: EngineContext, reason: str) -> EngineRunResult:
+        result = self._skipped_result(context, reason)
+        skip_finding = result.findings[0]
+        skip_finding.metadata["canonical_source"] = GITHUB_REPO
+        skip_finding.repro_steps = [
+            f"Use the Copilot Studio Kit at {GITHUB_REPO}",
+            "Provide a local copilot-studio-kit launcher if your org ships one",
+            "Re-run URT profile",
+        ]
+        if package_not_found_reason(reason):
+            result.findings.append(
+                UnifiedFinding(
+                    finding_id=f"{context.run_id}:{context.target.target_id}:powercat:package_not_found",
+                    run_id=context.run_id,
+                    target_id=context.target.target_id,
+                    engine="powercat",
+                    category="coverage_gap",
+                    sub_category="package_not_found",
+                    severity="medium",
+                    confidence=0.9,
+                    attack_vector="engine_runtime",
+                    attack_complexity="n/a",
+                    success=False,
+                    description=reason,
+                    evidence_refs=[],
+                    metadata={
+                        "canonical_source": GITHUB_REPO,
+                        "deprecated_npm": DEPRECATED_NPM_PACKAGE,
+                    },
+                )
+            )
+        return result
+
     def _runtime_gap_findings(
         self,
         *,
@@ -110,11 +150,36 @@ class PowerCatEngineAdapter(CommandEngineAdapter):
             return []
 
         indicators = [
-            ("package_not_found", "npm error code e404", "medium", "Power CAT npm package not found"),
-            ("package_not_found", "could not be found", "medium", "Power CAT npm package not found"),
-            ("registry_not_found", "not found - get https://registry.npmjs.org", "medium", "Power CAT npm registry lookup failed"),
-            ("auth_expired", "access token expired or revoked", "medium", "Power CAT npm auth token expired/revoked"),
-            ("permission_denied", "you do not have permission", "medium", "Power CAT package permission denied"),
+            (
+                "package_not_found",
+                "npm error code e404",
+                "medium",
+                f"Power CAT npm package not found. There is no public npm CLI; use {GITHUB_REPO}",
+            ),
+            (
+                "package_not_found",
+                "could not be found",
+                "medium",
+                f"Power CAT npm package not found. There is no public npm CLI; use {GITHUB_REPO}",
+            ),
+            (
+                "registry_not_found",
+                "not found - get https://registry.npmjs.org",
+                "medium",
+                f"Power CAT npm registry lookup failed. Canonical source: {GITHUB_REPO}",
+            ),
+            (
+                "auth_expired",
+                "access token expired or revoked",
+                "medium",
+                "Power CAT npm auth token expired/revoked",
+            ),
+            (
+                "permission_denied",
+                "you do not have permission",
+                "medium",
+                "Power CAT package permission denied",
+            ),
         ]
 
         findings: list[UnifiedFinding] = []
@@ -138,6 +203,7 @@ class PowerCatEngineAdapter(CommandEngineAdapter):
                     success=False,
                     description=description,
                     evidence_refs=evidence_refs,
+                    metadata={"canonical_source": GITHUB_REPO},
                 )
             )
         return findings

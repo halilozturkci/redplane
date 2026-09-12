@@ -180,8 +180,8 @@ That is all you need to install dependencies, run the test suite, execute a run 
 
 **Optional — only for specific engines:**
 
-- Node.js `>= 22.22.0` with `npm` and `npx` — required by `promptfoo@0.123.0` (Power CAT only needs `npx`)
-- npm access to `@microsoft/copilot-studio-kit-cli` — for the `powercat` (Power CAT) engine
+- Node.js `>= 22.22.0` with `npm` and `npx` — required by `promptfoo@0.123.0`
+- Power CAT (`powercat`) has no public npm CLI; use the Copilot Studio Kit at https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit
 - The external engine CLIs themselves (Garak, DeepTeam, Giskard, Inspect, PowerPwn …) are installed on demand — see [Install](#install-uv-first). Engines you do not configure are never required.
 
 ## Repository Layout
@@ -258,7 +258,7 @@ Bootstrap does:
 - launcher verification for all engines
 - local state folder creation under `.urt_state/`
 
-> The bootstrap script requires Node.js `>= 22.22.0` (`npm`/`npx`) because it provisions `promptfoo@0.123.0` and the `powercat` engine. If you only need the core platform, use the [Quickstart](#quickstart-60-seconds) instead.
+> The bootstrap script requires Node.js `>= 22.22.0` (`npm`/`npx`) because it provisions `promptfoo@0.123.0`. If you only need the core platform, use the [Quickstart](#quickstart-60-seconds) instead.
 
 Copilot Studio SDK mode needs the `mcs` extra (PyPI GA client `microsoft-agents-copilotstudio-client==1.5.0`):
 
@@ -702,11 +702,13 @@ uv run urt run --spec specs/powerpwn.real.yaml
 Primary use:
 - governance/compliance oriented Copilot Studio checks
 
+There is **no public npm CLI**. Microsoft ships the Kit as a Power Platform solution and the `agent-review-pipeline` GitHub Action in [microsoft/Power-CAT-Copilot-Studio-Kit](https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit). `@microsoft/copilot-studio-kit-cli` is not published (npm E404). Do not invent a replacement package name. `pac` is a tertiary Power Platform CLI, not the Kit.
+
 Params:
 
 | Param | Required | Type | Default | Notes |
 |---|---|---|---|---|
-| `command` | no | string/list | `copilot-studio-kit agent-review run` | if launcher missing, URT falls back to `npx @microsoft/copilot-studio-kit-cli ...` |
+| `command` | no | string/list | `copilot-studio-kit agent-review run` | if the launcher is missing, the engine skips with a `coverage_gap` pointing at the GitHub repo. Unpublished npm / `npx github:...` commands are skipped the same way. |
 
 Example:
 
@@ -714,7 +716,7 @@ Example:
 engines:
   - name: powercat
     params:
-      command: npx -y @microsoft/copilot-studio-kit-cli --help
+      command: copilot-studio-kit agent-review run
 ```
 
 Run:
