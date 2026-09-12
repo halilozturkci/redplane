@@ -28,17 +28,18 @@ uv run urt validate --spec /tmp/urt_smoke.yaml
 
 ## Engine Installation Model
 
-- Python engines are isolated with `uv tool install`:
-  - `garak`
-  - `powerpwn`
-  - `deepteam`
-  - `inspect-ai`
+- Python engines/evaluators are isolated with `uv tool install`:
+  - `garak==0.17.0`
+  - `powerpwn==6.0.0` (Python 3.11)
+  - `deepteam==1.0.9` (with `sentry-sdk`, required for `--help`)
+  - `inspect-ai==0.3.263`
+  - `deepeval==4.2.2`
 - Promptfoo is installed locally (default: `~/.urt-tools/promptfoo`, package `promptfoo@0.123.0`) and exposed as `promptfoo`
 - Copilot Studio SDK: `uv sync --extra mcs` (pins `microsoft-agents-copilotstudio-client==1.5.0` from PyPI)
 - Power CAT is invoked with `npx` at runtime:
   - `@microsoft/copilot-studio-kit-cli`
 - Note: `@microsoft/copilot-studio-kit-cli` may require authenticated npm access in some environments.
-- Giskard is invoked with `uvx` runtime command (`uvx --python 3.12 --from giskard==2.19.2 python -c ...`) because the package does not expose a standalone `giskard` binary.
+- Giskard v3 is invoked with `uvx` (`giskard[scan]==3.0.0`) because the meta-package does not expose a standalone `giskard` binary.
 
 This avoids dependency conflicts across engines (especially `pydantic` version conflicts).
 The Copilot Studio GA client is not in the base extra; install it with `uv sync --extra mcs`.
