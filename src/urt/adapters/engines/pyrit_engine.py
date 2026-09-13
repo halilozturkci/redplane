@@ -1,4 +1,4 @@
-"""PyRIT/Azure AI RedTeam engine adapter."""
+"""Native PyRIT 1.x engine adapter (subprocess wrap of red_team_scan.py)."""
 
 from __future__ import annotations
 
@@ -27,33 +27,11 @@ class PyRITEngineAdapter(CommandEngineAdapter):
         return "pyrit"
 
     def run(self, context: EngineContext) -> EngineRunResult:
-        script_path = Path(
-            str(
-                self.spec.params.get(
-                    "script_path",
-                    str(DEFAULT_SCRIPT_PATH),
-                )
-            )
-        ).expanduser()
-        if not script_path.is_absolute():
-            script_path = script_path.resolve()
-        if not script_path.exists():
-            return self._skipped_result(context, f"PyRIT script not found: {script_path}")
-
-        config_path = self.spec.params.get("config_path", str(DEFAULT_CONFIG_PATH))
-        config_path_obj = Path(str(config_path)).expanduser()
-        if not config_path_obj.is_absolute():
-            config_path_obj = config_path_obj.resolve()
-        if not config_path_obj.exists():
-            return self._skipped_result(context, f"PyRIT config not found: {config_path_obj}")
-
         working_dir = Path(str(self.spec.params.get("working_dir", PROJECT_ROOT))).expanduser()
         if not working_dir.is_absolute():
             working_dir = working_dir.resolve()
         if not working_dir.exists():
             return self._skipped_result(context, f"PyRIT working_dir not found: {working_dir}")
-
-        before_scan_dirs = {p.name for p in working_dir.glob(".scan_*") if p.is_dir()}
 
         command = self.spec.params.get("command")
         if command:
@@ -62,12 +40,34 @@ class PyRITEngineAdapter(CommandEngineAdapter):
             else:
                 command_parts = [str(part) for part in command]
         else:
+            script_path = Path(
+                str(
+                    self.spec.params.get(
+                        "script_path",
+                        str(DEFAULT_SCRIPT_PATH),
+                    )
+                )
+            ).expanduser()
+            if not script_path.is_absolute():
+                script_path = script_path.resolve()
+            if not script_path.exists():
+                return self._skipped_result(context, f"PyRIT script not found: {script_path}")
+
+            config_path = self.spec.params.get("config_path", str(DEFAULT_CONFIG_PATH))
+            config_path_obj = Path(str(config_path)).expanduser()
+            if not config_path_obj.is_absolute():
+                config_path_obj = config_path_obj.resolve()
+            if not config_path_obj.exists():
+                return self._skipped_result(context, f"PyRIT config not found: {config_path_obj}")
+
             command_parts = [
                 "python",
                 str(script_path),
                 "--config",
                 str(config_path_obj),
             ]
+
+        before_scan_dirs = {p.name for p in working_dir.glob(".scan_*") if p.is_dir()}
 
         env = os.environ.copy()
         env.update(build_runtime_env(context))

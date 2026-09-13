@@ -9,8 +9,10 @@ from urt.powercat_kit import (
     DEFAULT_COMMAND,
     DEPRECATED_NPM_PACKAGE,
     GITHUB_REPO,
+    SKIP_GITHUB_NPX,
     command_uses_deprecated_npm,
     command_uses_github_npx_kit,
+    package_not_found_reason,
     skip_reason_for_command,
 )
 
@@ -18,6 +20,7 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_COMMAND_SURFACES = (
     REPO / "src" / "urt" / "cli.py",
     REPO / "templates" / "run_spec.sample.yaml",
+    REPO / "templates" / "run_spec.smoke.yaml",
 )
 
 
@@ -59,3 +62,5 @@ def test_skip_helpers_detect_unpublished_npm_and_github_npx() -> None:
     assert skip_reason_for_command(github_cmd)
     assert skip_reason_for_command(native_cmd) is None
     assert skip_reason_for_command(["npx", "some-other-tool"]) is None
+    assert package_not_found_reason(skip_reason_for_command(npm_cmd) or "") is True
+    assert package_not_found_reason(SKIP_GITHUB_NPX) is False

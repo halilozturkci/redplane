@@ -9,6 +9,7 @@ from pathlib import Path
 from ..engine_base import EngineContext
 from ..inspect_log import (
     as_number,
+    is_accuracy_style_metric,
     iter_payload_samples,
     iter_results_score_blocks,
     iter_sample_score_items,
@@ -68,6 +69,8 @@ def _inspect_finding(
     complexity: object,
     description: str,
     raw: dict[str, object],
+    severity: str | None = None,
+    success: bool | None = None,
 ) -> UnifiedFinding:
     return UnifiedFinding(
         finding_id=f"{run_id}:{target_id}:inspect:{idx}",
@@ -76,11 +79,11 @@ def _inspect_finding(
         engine="inspect",
         category=category,
         sub_category="inspect_test",
-        severity="info" if passed else "medium",
+        severity=severity if severity is not None else ("info" if passed else "medium"),
         confidence=min(max(score, 0.0), 1.0),
         attack_vector=attack_vector,
         attack_complexity=str(complexity if complexity is not None else "unknown"),
-        success=not passed,
+        success=not passed if success is None else success,
         description=description,
         metadata={"raw": raw},
     )
@@ -143,6 +146,24 @@ def _findings_from_sample(
                 )
             )
         return findings
+    error = sample.get("error")
+    if error:
+        return [
+            _inspect_finding(
+                run_id=run_id,
+                target_id=target_id,
+                idx=start_idx,
+                category="coverage_gap",
+                passed=True,
+                score=0.0,
+                attack_vector="engine_runtime",
+                complexity=sample.get("complexity", "unknown"),
+                description=str(error),
+                raw=sample,
+                severity="info",
+                success=False,
+            )
+        ]
     if "status" in sample or "outcome" in sample or "score" in sample:
         return [
             _finding_from_legacy_test(
@@ -167,9 +188,11 @@ def _findings_from_results_object(
         if selected is None:
             continue
         primary, selected_name, raw_metric = selected
+        if not is_accuracy_style_metric(selected_name):
+            continue
         _, value = _inspect_score_polarity(raw_metric)
-        # Aggregate metrics are rates. A value below 1.0 means some samples
-        # failed; the per-sample >= 0.5 threshold would hide that.
+        # Accuracy-style aggregates are rates. A value below 1.0 means some
+        # samples failed; the per-sample >= 0.5 threshold would hide that.
         passed = value >= 1.0
         findings.append(
             _inspect_finding(

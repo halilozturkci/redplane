@@ -29,6 +29,7 @@ class EvalContext:
     evidence_level: str = "standard"
     enabled_scenarios: list[str] = field(default_factory=list)
     run_profile: str = "nightly"
+    engine_findings_path: str | None = None
 
 
 class EvaluatorAdapter(ABC):

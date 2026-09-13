@@ -9,8 +9,10 @@ try:
         McsCopilotClient,
         McsConnectionSettings,
     )
+    from urt.integrations.mcs_pyrit.refusal_scorer import MCS_TRANSPORT_ERROR_TEXT
 except ImportError:
     from copilot_client import McsCopilotClient, McsConnectionSettings
+    MCS_TRANSPORT_ERROR_TEXT = "I encountered an error and couldn't process your request."
 
 
 @dataclass
@@ -89,7 +91,7 @@ class McsAgentCallbackTarget:
             except Exception as e:
                 print(f"Error calling Microsoft Copilot Studio Agent: {e!s}")
                 formatted_response = {
-                    "content": "I encountered an error and couldn't process your request.",
+                    "content": MCS_TRANSPORT_ERROR_TEXT,
                     "role": "assistant"
                 }
             

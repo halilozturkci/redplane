@@ -173,6 +173,13 @@ class Orchestrator:
                             stage=f"before evaluator {evaluator_spec.name} on {target_spec.target_id}"
                         )
                         evaluator_adapter = create_evaluator_adapter(evaluator_spec)
+                        sidecar_path = self._write_engine_findings_sidecar(
+                            run_id=run_id,
+                            evaluator_name=evaluator_spec.name,
+                            target_id=target_spec.target_id,
+                            findings=target_findings,
+                            engine_results=target_engine_results,
+                        )
                         eval_context = EvalContext(
                             run_id=run_id,
                             run_name=spec.name,
@@ -185,6 +192,7 @@ class Orchestrator:
                             evidence_level=spec.evidence_level,
                             enabled_scenarios=[],
                             run_profile=spec.run_profile,
+                            engine_findings_path=sidecar_path,
                         )
                         eval_result = self._safe_run_evaluator(evaluator_adapter, eval_context)
                         budget.observe_metrics(eval_result.metrics)
@@ -329,6 +337,37 @@ class Orchestrator:
                 "error": str(exc),
                 "error_log_path": error_path,
             }
+
+    def _write_engine_findings_sidecar(
+        self,
+        *,
+        run_id: str,
+        evaluator_name: str,
+        target_id: str,
+        findings: list[UnifiedFinding],
+        engine_results: list[EngineRunResult],
+    ) -> str:
+        payload = {
+            "schema": "urt.engine_findings.v1",
+            "run_id": run_id,
+            "target_id": target_id,
+            "evaluator": evaluator_name,
+            "engine_findings": [item.to_dict() for item in findings],
+            "engine_summaries": [
+                {
+                    "engine": item.engine,
+                    "status": item.status,
+                    "message": item.message,
+                    "metrics": item.metrics,
+                }
+                for item in engine_results
+            ],
+        }
+        return self.artifact_store.write_json(
+            run_id,
+            f"raw/{evaluator_name}/{target_id}_engine_findings.json",
+            payload,
+        )
 
     def _safe_run_engine(self, engine_adapter, context: EngineContext) -> EngineRunResult:
         try:

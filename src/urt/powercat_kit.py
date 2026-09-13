@@ -59,4 +59,5 @@ def skip_reason_missing_launcher(launcher: str) -> str:
 
 
 def package_not_found_reason(reason: str) -> bool:
-    return reason in {SKIP_DEPRECATED_NPM, SKIP_GITHUB_NPX}
+    """True only for the unpublished npm package skip, not GitHub-npx."""
+    return reason == SKIP_DEPRECATED_NPM

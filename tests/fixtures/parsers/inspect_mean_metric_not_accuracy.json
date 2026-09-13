@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "status": "success",
+  "eval": {"eval_id": "eval-mean-only", "task": "quality"},
+  "results": {
+    "total_samples": 4,
+    "completed_samples": 4,
+    "scores": [
+      {
+        "name": "quality",
+        "scorer": "model_graded",
+        "params": {},
+        "metrics": {
+          "mean": {"name": "mean", "value": 0.8, "params": {}},
+          "stderr": {"name": "stderr", "value": 0.05, "params": {}}
+        }
+      }
+    ]
+  }
+}

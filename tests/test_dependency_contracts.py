@@ -113,6 +113,29 @@ def test_require_node_rejects_below_floor(tmp_path: Path) -> None:
     assert "22.22.0" in combined
 
 
+def test_require_node_does_not_use_gnu_sort_v() -> None:
+    script = (ROOT / "scripts" / "require_node.sh").read_text(encoding="utf-8")
+    assert "sort -V" not in script
+    assert "sort -v" not in script
+    assert "_urt_version_ge" in script
+
+
+def test_require_node_accepts_newer_major(tmp_path: Path) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _write_fake_node(bindir / "node", "23.1.0")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["bash", "-c", f"source '{ROOT / 'scripts' / 'require_node.sh'}' && require_urt_node"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_require_node_accepts_floor(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
     bindir.mkdir()

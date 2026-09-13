@@ -521,6 +521,9 @@ def test_powercat_skips_github_npx_non_cli(tmp_path: Path, monkeypatch) -> None:
     assert ran == []
     assert result.status == "skipped"
     assert "no root package.json" in result.message
+    categories = {item.sub_category for item in result.findings}
+    assert "package_not_found" not in categories
+    assert all("deprecated_npm" not in item.metadata for item in result.findings)
 
 
 def test_powercat_runs_native_launcher_when_present(tmp_path: Path, monkeypatch) -> None:

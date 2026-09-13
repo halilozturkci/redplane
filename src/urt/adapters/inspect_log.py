@@ -10,6 +10,34 @@ from dataclasses import dataclass
 from typing import Any, Iterator
 
 DIAGNOSTIC_METRIC_NAMES = frozenset({"stderr", "std", "std_err", "se", "bootstrap_std"})
+ACCURACY_STYLE_METRIC_NAMES = frozenset(
+    {
+        "accuracy",
+        "exact_match",
+        "exactmatch",
+        "match",
+        "pass",
+        "pass_rate",
+        "passrate",
+        "correct",
+        "correctness",
+    }
+)
+
+
+def is_accuracy_style_metric(name: str) -> bool:
+    """Engine aggregates use a 1.0 pass bar only for rate/accuracy metrics."""
+    token = str(name or "").strip().lower().replace("-", "_")
+    return token in ACCURACY_STYLE_METRIC_NAMES
+
+
+def metric_payload_is_usable(raw: object) -> bool:
+    """Skip null primary metrics so they are not scored as 0."""
+    if raw is None:
+        return False
+    if isinstance(raw, dict) and "value" in raw and raw.get("value") is None and raw.get("score") is None:
+        return False
+    return True
 
 
 def as_number(value: object) -> float | None:
@@ -63,10 +91,12 @@ def primary_result_metric(block: dict[str, Any]) -> tuple[str, str, object] | No
     primary = str(block.get("name") or block.get("scorer") or "accuracy")
     metrics = block.get("metrics")
     if isinstance(metrics, dict):
-        if primary in metrics:
+        if primary in metrics and metric_payload_is_usable(metrics[primary]):
             return primary, primary, metrics[primary]
         for key, value in metrics.items():
             if str(key).lower() in DIAGNOSTIC_METRIC_NAMES:
+                continue
+            if not metric_payload_is_usable(value):
                 continue
             return primary, str(key), value
     if "value" in block or "score" in block:

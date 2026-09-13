@@ -22,7 +22,7 @@ Set up Redplane on a consultant laptop so they can run manual attack-and-evaluat
 
 ```bash
 uv run urt --help
-uv run urt init --output /tmp/urt_smoke.yaml
+uv run urt init --smoke --output /tmp/urt_smoke.yaml
 uv run urt validate --spec /tmp/urt_smoke.yaml
 ```
 
@@ -47,7 +47,9 @@ The Copilot Studio GA client is not in the base extra; install it with `uv sync 
 
 ## Recommended Run Flow
 
-1. Prepare a run spec based on `templates/run_spec.sample.yaml` (or `templates/run_spec.mcs_real.sample.yaml` for MCS SDK mode).
+1. Prepare a run spec. `templates/run_spec.sample.yaml` / `urt init --smoke` are launcher presence only.
+   - For Copilot Studio SDK + native PyRIT, use `templates/run_spec.mcs_real.sample.yaml`.
+   - For eval-after-attack (engine findings sidecar + `scripts/eval_engine_findings.py`), use `templates/run_spec.eval_after_attack.sample.yaml`.
    - For DeepTeam seeded fallback mode, use `templates/run_spec.deepteam_seeded.sample.yaml`.
    - For Promptfoo dataset-mode (preset or custom JSONL/CSV), use `templates/run_spec.promptfoo_dataset.sample.yaml`.
 2. Add target-specific credentials and safe test scope.

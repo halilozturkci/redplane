@@ -13,6 +13,7 @@ PIN_SURFACES = (
     REPO / "scripts" / "install_engine_tools_uv.sh",
     REPO / "scripts" / "verify_engine_tooling.sh",
     REPO / "templates" / "run_spec.sample.yaml",
+    REPO / "templates" / "run_spec.smoke.yaml",
     REPO / "templates" / "run_spec.promptfoo_dataset.sample.yaml",
     REPO / "README.md",
     REPO / "docs" / "consultant-onboarding.md",
@@ -69,9 +70,10 @@ def test_cli_template_commands_use_install_script_specs() -> None:
 
 
 def test_sample_spec_commands_match_pin_table() -> None:
-    text = (REPO / "templates" / "run_spec.sample.yaml").read_text(encoding="utf-8")
-    for item in ENGINE_PINS:
-        assert item.uvx_command in text
+    for spec_name in ("run_spec.sample.yaml", "run_spec.smoke.yaml"):
+        text = (REPO / "templates" / spec_name).read_text(encoding="utf-8")
+        for item in ENGINE_PINS:
+            assert item.uvx_command in text, f"{item.uvx_command} missing from {spec_name}"
 
 
 def test_verify_script_includes_pin_literals() -> None:

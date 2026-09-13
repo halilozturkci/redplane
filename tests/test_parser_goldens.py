@@ -112,6 +112,52 @@ def test_inspect_empty_tests_list_falls_back_to_results() -> None:
     assert findings[0].success is True
 
 
+def test_inspect_error_sample_without_scores_is_kept() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_sample_error_no_scores.json",
+    )
+    assert len(findings) == 1
+    assert findings[0].category == "coverage_gap"
+    assert findings[0].attack_vector == "engine_runtime"
+    assert findings[0].success is False
+    assert findings[0].severity != "medium"
+    assert "model timeout" in findings[0].description
+
+
+def test_inspect_null_primary_metric_is_not_scored_as_zero() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_null_primary_metric.json",
+    )
+    assert findings == []
+
+
+def test_inspect_continuous_mean_aggregate_is_not_an_attack() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_mean_metric_not_accuracy.json",
+    )
+    assert findings == []
+    assert all(item.success is not True for item in findings)
+
+
+def test_inspect_accuracy_named_block_with_only_mean_is_not_an_attack() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_accuracy_name_mean_metric.json",
+    )
+    assert findings == []
+
+
 def test_inspect_legacy_tests_list_still_parses() -> None:
     adapter = InspectEngineAdapter(_engine("inspect"))
     findings = adapter._parse_output(
