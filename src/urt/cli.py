@@ -80,7 +80,7 @@ def _template_payload() -> dict[str, Any]:
             {
                 "name": "deepeval",
                 "metrics": ["answer_relevancy", "faithfulness", "toxicity"],
-                "params": {"command": "deepeval --help", "threshold": 0.5},
+                "params": {"command": pin("deepeval").uvx_command, "threshold": 0.5},
                 "fail_open": True,
             },
             {
@@ -90,7 +90,7 @@ def _template_payload() -> dict[str, Any]:
             },
             {
                 "name": "giskard_eval",
-                "params": {"command": "giskard --help", "threshold": 0.5},
+                "params": {"command": pin("giskard").uvx_command, "threshold": 0.5},
                 "fail_open": True,
             },
             {

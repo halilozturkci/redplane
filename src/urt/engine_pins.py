@@ -1,4 +1,4 @@
-"""Pinned engine CLI versions for installers, templates, and ``urt init``.
+"""Pinned engine/evaluator CLI versions for installers, templates, and ``urt init``.
 
 Bash installers keep their own literals (bootstrap cannot import ``urt``).
 Tests require those literals to equal this table. Do not enable the
@@ -18,31 +18,52 @@ class EnginePin:
     argv: str
     uv_tool: bool = True
     inject_python_flag: bool = False
+    extras: str = ""
+    with_packages: tuple[str, ...] = ()
 
     @property
     def spec(self) -> str:
-        return f"{self.package}=={self.version}"
+        extra = f"[{self.extras}]" if self.extras else ""
+        return f"{self.package}{extra}=={self.version}"
+
+    @property
+    def quoted_spec(self) -> str:
+        if self.extras:
+            return f"'{self.spec}'"
+        return self.spec
 
     @property
     def uvx_command(self) -> str:
-        prefix = "uvx"
+        parts = ["uvx"]
         if self.inject_python_flag:
-            prefix = f"uvx --python {self.python}"
-        return f"{prefix} --from {self.spec} {self.argv}"
+            parts.extend(["--python", self.python])
+        parts.extend(["--from", self.quoted_spec])
+        for extra_pkg in self.with_packages:
+            parts.extend(["--with", extra_pkg])
+        parts.append(self.argv)
+        return " ".join(parts)
 
 
 ENGINE_PINS: tuple[EnginePin, ...] = (
     EnginePin("garak", "0.17.0", "3.12", "garak --version"),
     EnginePin("powerpwn", "6.0.0", "3.11", "powerpwn --help"),
-    EnginePin("deepteam", "1.0.9", "3.12", "deepteam --help"),
+    EnginePin(
+        "deepteam",
+        "1.0.9",
+        "3.12",
+        "deepteam --help",
+        with_packages=("sentry-sdk",),
+    ),
     EnginePin("inspect-ai", "0.3.263", "3.12", "inspect --help"),
+    EnginePin("deepeval", "4.2.2", "3.12", "deepeval --help"),
     EnginePin(
         "giskard",
-        "2.19.2",
+        "3.0.0",
         "3.12",
-        'python -c "import giskard; print(giskard.__version__)"',
+        'python -c "from giskard.scan import vulnerability_scan; print(\'giskard-scan-ok\')"',
         uv_tool=False,
         inject_python_flag=True,
+        extras="scan",
     ),
 )
 

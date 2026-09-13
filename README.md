@@ -819,7 +819,7 @@ engines:
   - name: giskard
     params:
       command: >-
-        uvx --python 3.12 --from giskard==2.19.2 python
+        uvx --python 3.12 --from 'giskard[scan]==3.0.0' python
         /tmp/urt-real-attacks/giskard_real_scan.py
       output_json: /tmp/urt-real-attacks/giskard_results.json
 ```
@@ -911,7 +911,7 @@ evaluators:
     params:
       model: gpt-4.1-mini
       threshold: 0.5
-      command: "deepeval test run"
+      command: "uvx --from deepeval==4.2.2 deepeval --help"
       output_json: /tmp/deepeval_results.json
 ```
 
