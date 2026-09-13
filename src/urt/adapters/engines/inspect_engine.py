@@ -7,26 +7,19 @@ import shlex
 from pathlib import Path
 
 from ..engine_base import EngineContext
+from ..inspect_log import (
+    as_number,
+    iter_payload_samples,
+    iter_results_score_blocks,
+    iter_sample_score_items,
+    primary_result_metric,
+)
 from ...types import UnifiedFinding
 from ._command import CommandEngineAdapter
 
-_DIAGNOSTIC_METRICS = frozenset({"stderr", "std", "std_err", "se", "bootstrap_std"})
 _PASS_STATUS = frozenset({"pass", "passed", "ok", "success"})
 _PASS_TOKENS = frozenset({"C", "P", "PASS", "PASSED", "OK", "CORRECT", "TRUE"})
 _FAIL_TOKENS = frozenset({"I", "F", "FAIL", "FAILED", "INCORRECT", "FALSE"})
-
-
-def _as_number(value: object) -> float | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
-            return None
-    return None
 
 
 def _inspect_score_polarity(score_obj: object) -> tuple[bool, float]:
@@ -35,7 +28,7 @@ def _inspect_score_polarity(score_obj: object) -> tuple[bool, float]:
         value = score_obj.get("value", score_obj.get("score"))
     if isinstance(value, bool):
         return value, 1.0 if value else 0.0
-    numeric = _as_number(value)
+    numeric = as_number(value)
     if numeric is not None:
         return numeric >= 0.5, numeric
     if isinstance(value, str):
@@ -102,7 +95,7 @@ def _finding_from_legacy_test(
 ) -> UnifiedFinding:
     status = str(test.get("status", test.get("outcome", "unknown"))).lower()
     passed = status in _PASS_STATUS
-    numeric = _as_number(test.get("score"))
+    numeric = as_number(test.get("score"))
     score = numeric if numeric is not None else (1.0 if passed else 0.0)
     category = str(test.get("category", test.get("name", "inspect_test")))
     return _inspect_finding(
@@ -126,11 +119,11 @@ def _findings_from_sample(
     start_idx: int,
     sample: dict[str, object],
 ) -> list[UnifiedFinding]:
-    scores = sample.get("scores")
     attack = _inspect_attack_vector(sample)
-    if isinstance(scores, dict) and scores:
+    score_items = list(iter_sample_score_items(sample, prefer_scores=True))
+    if score_items:
         findings: list[UnifiedFinding] = []
-        for offset, (scorer_name, score_obj) in enumerate(scores.items()):
+        for offset, (scorer_name, score_obj) in enumerate(score_items):
             passed, value = _inspect_score_polarity(score_obj)
             explanation = ""
             if isinstance(score_obj, dict):
@@ -168,33 +161,13 @@ def _findings_from_results_object(
     target_id: str,
     results: dict[str, object],
 ) -> list[UnifiedFinding]:
-    scores = results.get("scores")
-    if not isinstance(scores, list):
-        return []
     findings: list[UnifiedFinding] = []
-    for block in scores:
-        if not isinstance(block, dict):
-            continue
-        primary = str(block.get("name") or block.get("scorer") or "accuracy")
-        metrics = block.get("metrics")
-        selected: object | None = None
-        selected_name = primary
-        if isinstance(metrics, dict):
-            if primary in metrics:
-                selected = metrics[primary]
-            else:
-                for key, value in metrics.items():
-                    if str(key).lower() in _DIAGNOSTIC_METRICS:
-                        continue
-                    selected = value
-                    selected_name = str(key)
-                    break
+    for block in iter_results_score_blocks(results):
+        selected = primary_result_metric(block)
         if selected is None:
-            if "value" in block or "score" in block:
-                selected = block
-            else:
-                continue
-        _, value = _inspect_score_polarity(selected)
+            continue
+        primary, selected_name, raw_metric = selected
+        _, value = _inspect_score_polarity(raw_metric)
         # Aggregate metrics are rates. A value below 1.0 means some samples
         # failed; the per-sample >= 0.5 threshold would hide that.
         passed = value >= 1.0
@@ -295,21 +268,18 @@ class InspectEngineAdapter(CommandEngineAdapter):
                 if isinstance(item, dict)
             ]
 
-        samples = payload.get("samples")
-        if isinstance(samples, list):
-            findings: list[UnifiedFinding] = []
-            for sample in samples:
-                if isinstance(sample, dict):
-                    findings.extend(
-                        _findings_from_sample(
-                            run_id=run_id,
-                            target_id=target_id,
-                            start_idx=len(findings),
-                            sample=sample,
-                        )
-                    )
-            if findings:
-                return findings
+        findings: list[UnifiedFinding] = []
+        for sample in iter_payload_samples(payload):
+            findings.extend(
+                _findings_from_sample(
+                    run_id=run_id,
+                    target_id=target_id,
+                    start_idx=len(findings),
+                    sample=sample,
+                )
+            )
+        if findings:
+            return findings
 
         results = payload.get("results")
         if isinstance(results, list):
