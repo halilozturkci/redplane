@@ -153,14 +153,14 @@ def _findings_from_sample(
                 run_id=run_id,
                 target_id=target_id,
                 idx=start_idx,
-                category="inspect_error",
+                category="coverage_gap",
                 passed=True,
                 score=0.0,
-                attack_vector=attack,
+                attack_vector="engine_runtime",
                 complexity=sample.get("complexity", "unknown"),
                 description=str(error),
                 raw=sample,
-                severity="medium",
+                severity="info",
                 success=False,
             )
         ]

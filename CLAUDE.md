@@ -12,7 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync                              # install deps
 uv sync --extra mcs                  # Copilot Studio GA client (SDK mode)
 uv run urt --help                    # CLI entry point
-uv run urt run --spec specs/my.yaml  # execute a run spec
+uv run urt run --spec templates/run_spec.mcs_real.sample.yaml  # execute a real run spec
+uv run urt run --spec templates/run_spec.smoke.yaml  # launcher presence only
 uv run urt serve-gateway --config templates/gateway_config.sample.yaml
 ```
 

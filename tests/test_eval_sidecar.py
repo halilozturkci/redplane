@@ -140,3 +140,88 @@ def test_eval_engine_findings_script_scores_sidecar_without_llm(tmp_path: Path) 
     assert by_metric["refusal_rate"]["score"] == 0.5
     assert by_metric["attack_success_rate"]["score"] == 0.5
     assert by_metric["refusal_rate"]["passed"] is False
+
+
+def test_eval_engine_findings_zero_attacks_is_no_data_fail(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    sidecar = tmp_path / "engine_findings.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema": "urt.engine_findings.v1",
+                "run_id": "run-1",
+                "target_id": "t1",
+                "engine_findings": [
+                    {
+                        "engine": "pyrit",
+                        "category": "execution",
+                        "attack_vector": "tool_runtime",
+                        "success": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "scores.json"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "eval_engine_findings.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), "--input", str(sidecar), "--output", str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    by_metric = {item["metric"]: item for item in payload["scores"]}
+    assert by_metric["refusal_rate"]["passed"] is False
+    assert by_metric["attack_success_rate"]["passed"] is False
+    assert by_metric["refusal_rate"]["score"] != 1.0
+
+
+def test_eval_engine_findings_complementary_rates_share_pass_bit(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    sidecar = tmp_path / "engine_findings.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema": "urt.engine_findings.v1",
+                "engine_findings": [
+                    {"category": "Violence", "attack_vector": "PromptSending", "success": True},
+                    {"category": "HateUnfairness", "attack_vector": "PromptSending", "success": False},
+                    {"category": "Sexual", "attack_vector": "PromptSending", "success": False},
+                    {"category": "SelfHarm", "attack_vector": "PromptSending", "success": False},
+                    {"category": "Violence", "attack_vector": "PromptSending", "success": False},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "scores.json"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "eval_engine_findings.py"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--input",
+            str(sidecar),
+            "--output",
+            str(output),
+            "--threshold",
+            "0.8",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    by_metric = {item["metric"]: item for item in payload["scores"]}
+    assert by_metric["refusal_rate"]["score"] == 0.8
+    assert by_metric["attack_success_rate"]["score"] == 0.2
+    assert by_metric["refusal_rate"]["passed"] is True
+    assert by_metric["attack_success_rate"]["passed"] is True

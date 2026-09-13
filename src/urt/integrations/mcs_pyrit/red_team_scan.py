@@ -114,6 +114,18 @@ def canonicalize_risk_category(raw: str) -> str:
     return alias or text
 
 
+def _is_known_bundled_prompts_path(raw: str) -> bool:
+    """True only for the shipped prompts.json, including the relative config path."""
+    candidate = Path(raw).expanduser()
+    try:
+        if candidate.exists() and candidate.resolve() == BUNDLED_PROMPTS_PATH.resolve():
+            return True
+    except OSError:
+        pass
+    posix = candidate.as_posix().replace("\\", "/")
+    return posix.endswith("src/urt/integrations/mcs_pyrit/config/custom_prompt_data/prompts.json")
+
+
 def load_objectives(red_team_config: dict[str, Any]) -> list[dict[str, str]]:
     """Build (category, objective) rows from custom prompts or risk category probes."""
     custom_path = str(red_team_config.get("custom_prompts_path") or "").strip()
@@ -121,15 +133,17 @@ def load_objectives(red_team_config: dict[str, Any]) -> list[dict[str, str]]:
     limit = max(int(red_team_config.get("num_objectives") or 1), 1)
     if custom_path:
         resolved = Path(custom_path).expanduser()
-        if not resolved.exists() and BUNDLED_PROMPTS_PATH.exists():
+        if _is_known_bundled_prompts_path(custom_path):
             resolved = BUNDLED_PROMPTS_PATH
+        elif not resolved.exists():
+            raise SystemExit(f"Error: custom_prompts_path not found: {custom_path}")
         if resolved.exists():
             rows = _objectives_from_file(resolved)
             if categories:
                 wanted = {item.lower() for item in categories}
                 rows = [row for row in rows if row["risk_category"].lower() in wanted]
             return _limit_rows(rows, limit)
-        return []
+        raise SystemExit(f"Error: custom_prompts_path not found: {custom_path}")
     if not categories:
         categories = ["Violence", "HateUnfairness"]
     if BUNDLED_PROMPTS_PATH.exists():

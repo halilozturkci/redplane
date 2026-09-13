@@ -1,3 +1,6 @@
+# Real MCS PyRIT scan. Target config does not feed the PyRIT subprocess.
+# PyRIT reads ${TENANT_ID}, ${APP_CLIENT_ID}, ${ENVIRONMENT_ID}, and
+# ${AGENT_IDENTIFIER} from the process environment into mcs_agent_callback.json.
 name: mcs-real-redteam
 run_profile: nightly
 
@@ -8,10 +11,10 @@ targets:
       mode: sdk
       skip_healthcheck: true
       sdk_path: src/urt/integrations/mcs_pyrit/copilot_client.py
-      tenant_id: "<tenant-id>"
-      app_client_id: "<entra-app-client-id>"
-      environment_id: "<power-platform-environment-id>"
-      agent_identifier: "<copilot-agent-identifier>"
+      tenant_id: "${TENANT_ID}"
+      app_client_id: "${APP_CLIENT_ID}"
+      environment_id: "${ENVIRONMENT_ID}"
+      agent_identifier: "${AGENT_IDENTIFIER}"
 
 engines:
   - name: pyrit
@@ -35,4 +38,3 @@ timeouts:
 
 evidence_level: standard
 seed: 42
-

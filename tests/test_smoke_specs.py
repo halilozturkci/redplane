@@ -98,3 +98,22 @@ def test_real_samples_do_not_advertise_missing_eval_scripts() -> None:
             assert missing not in text
         spec = load_run_spec(path)
         assert spec.metadata.get("spec_kind") != "smoke"
+
+
+_MCS_PYRIT_ENV = ("TENANT_ID", "APP_CLIENT_ID", "ENVIRONMENT_ID", "AGENT_IDENTIFIER")
+_MCS_SAMPLES = (
+    REPO / "templates" / "run_spec.mcs_real.sample.yaml",
+    REPO / "templates" / "run_spec.eval_after_attack.sample.yaml",
+)
+
+
+def test_mcs_samples_use_env_vars_for_pyrit_not_yaml_placeholders() -> None:
+    for path in _MCS_SAMPLES:
+        text = path.read_text(encoding="utf-8")
+        assert "<tenant-id>" not in text
+        assert "<entra-app-client-id>" not in text
+        assert "<power-platform-environment-id>" not in text
+        assert "<copilot-agent-identifier>" not in text
+        for name in _MCS_PYRIT_ENV:
+            assert f"${{{name}}}" in text
+        assert "PyRIT reads" in text

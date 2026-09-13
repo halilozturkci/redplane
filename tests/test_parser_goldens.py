@@ -120,9 +120,10 @@ def test_inspect_error_sample_without_scores_is_kept() -> None:
         path=FIXTURES / "inspect_sample_error_no_scores.json",
     )
     assert len(findings) == 1
-    assert findings[0].category == "inspect_error"
+    assert findings[0].category == "coverage_gap"
+    assert findings[0].attack_vector == "engine_runtime"
     assert findings[0].success is False
-    assert findings[0].severity == "medium"
+    assert findings[0].severity != "medium"
     assert "model timeout" in findings[0].description
 
 
