@@ -446,3 +446,100 @@ def test_powercat_runtime_gap_signals() -> None:
     categories = {item.sub_category for item in findings}
     assert "package_not_found" in categories
     assert "auth_expired" in categories
+    assert any("github.com/microsoft/Power-CAT-Copilot-Studio-Kit" in item.description for item in findings)
+
+
+def test_powercat_skips_missing_native_cli_without_npx_fallback(tmp_path: Path, monkeypatch) -> None:
+    adapter = PowerCatEngineAdapter(_engine_spec("powercat"))
+    monkeypatch.setattr(adapter, "_command_exists", lambda *_args, **_kwargs: False)
+    ran: list[object] = []
+    monkeypatch.setattr(
+        adapter,
+        "_result_from_command",
+        lambda *_args, **_kwargs: ran.append("ran") or EngineRunResult(
+            engine="powercat",
+            target_id="t-1",
+            findings=[],
+            artifacts=[],
+            metrics={"executed": True},
+            status="completed",
+            message="should not run",
+        ),
+    )
+    result = adapter.run(_engine_context(tmp_path))
+    assert ran == []
+    assert result.status == "skipped"
+    assert "github.com/microsoft/Power-CAT-Copilot-Studio-Kit" in result.message
+    assert result.findings[0].category == "coverage_gap"
+
+
+def test_powercat_skips_unpublished_npm_package_without_npx(tmp_path: Path, monkeypatch) -> None:
+    adapter = PowerCatEngineAdapter(
+        _engine_spec_with_params(
+            "powercat",
+            {"command": "npx -y @microsoft/copilot-studio-kit-cli --help"},
+        )
+    )
+    monkeypatch.setattr(adapter, "_command_exists", lambda cmd, **_kwargs: cmd == "npx")
+    ran: list[object] = []
+    monkeypatch.setattr(
+        adapter,
+        "_result_from_command",
+        lambda *_args, **_kwargs: ran.append("ran") or EngineRunResult(
+            engine="powercat",
+            target_id="t-1",
+            findings=[],
+            artifacts=[],
+            metrics={"executed": True},
+            status="completed",
+            message="should not run",
+        ),
+    )
+    result = adapter.run(_engine_context(tmp_path))
+    assert ran == []
+    assert result.status == "skipped"
+    categories = {item.sub_category for item in result.findings}
+    assert "package_not_found" in categories
+    assert "E404" in result.message
+
+
+def test_powercat_skips_github_npx_non_cli(tmp_path: Path, monkeypatch) -> None:
+    adapter = PowerCatEngineAdapter(
+        _engine_spec_with_params(
+            "powercat",
+            {"command": "npx -y github:microsoft/Power-CAT-Copilot-Studio-Kit --help"},
+        )
+    )
+    monkeypatch.setattr(adapter, "_command_exists", lambda cmd, **_kwargs: cmd == "npx")
+    ran: list[object] = []
+    monkeypatch.setattr(
+        adapter,
+        "_result_from_command",
+        lambda *_args, **_kwargs: ran.append("ran"),
+    )
+    result = adapter.run(_engine_context(tmp_path))
+    assert ran == []
+    assert result.status == "skipped"
+    assert "no root package.json" in result.message
+
+
+def test_powercat_runs_native_launcher_when_present(tmp_path: Path, monkeypatch) -> None:
+    adapter = PowerCatEngineAdapter(_engine_spec("powercat"))
+    monkeypatch.setattr(adapter, "_command_exists", lambda cmd, **_kwargs: cmd == "copilot-studio-kit")
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        adapter,
+        "_result_from_command",
+        lambda _context, command_list, **_kwargs: captured.append(command_list) or EngineRunResult(
+            engine="powercat",
+            target_id="t-1",
+            findings=[],
+            artifacts=[],
+            metrics={"executed": True, "return_code": 0},
+            status="completed",
+            message="ok",
+        ),
+    )
+    result = adapter.run(_engine_context(tmp_path))
+    assert result.status == "completed"
+    assert captured[0] == ["copilot-studio-kit", "agent-review", "run"]

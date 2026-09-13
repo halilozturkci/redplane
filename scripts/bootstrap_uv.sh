@@ -18,12 +18,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required for promptfoo local install and powercat runtime. Install Node.js >= ${URT_NODE_MIN}."
+  echo "npm is required for promptfoo local install. Install Node.js >= ${URT_NODE_MIN}."
   exit 1
 fi
 
 if ! command -v npx >/dev/null 2>&1; then
-  echo "npx is required for powercat engine. Install Node.js >= ${URT_NODE_MIN}."
+  echo "npx is required for promptfoo local install. Install Node.js >= ${URT_NODE_MIN}."
   exit 1
 fi
 

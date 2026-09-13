@@ -49,14 +49,13 @@ deepeval --help >/dev/null
 uvx --python 3.12 --from 'giskard[scan]==3.0.0' python -c "from giskard.scan import vulnerability_scan; print('giskard-scan-ok')" >/dev/null
 "${PROMPTFOO_BIN}" --version >/dev/null
 
-if npx -y @microsoft/copilot-studio-kit-cli --help >/dev/null 2>&1; then
-  echo "Power CAT CLI check: OK (@microsoft/copilot-studio-kit-cli)"
-elif npx -y github:microsoft/Power-CAT-Copilot-Studio-Kit --help >/dev/null 2>&1; then
-  echo "Power CAT CLI check: OK (github fallback: microsoft/Power-CAT-Copilot-Studio-Kit)"
+POWERCAT_KIT="https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit"
+if command -v copilot-studio-kit >/dev/null 2>&1; then
+  echo "Power CAT CLI check: OK (copilot-studio-kit)"
 elif command -v pac >/dev/null 2>&1 && pac help >/dev/null 2>&1; then
-  echo "Power CAT CLI check: OK (pac CLI available; use managed-solution workflow)"
+  echo "Power CAT check: WARN (no copilot-studio-kit; pac is a tertiary Power Platform CLI, not the Kit). Canonical: ${POWERCAT_KIT}"
 else
-  echo "Power CAT CLI check: WARN (npm package unavailable/private and github fallback also failed)"
+  echo "Power CAT check: WARN (no public npm CLI; Kit is a Power Platform solution + GitHub Action at ${POWERCAT_KIT})"
 fi
 
 if ! uv run python -c "import microsoft_agents.copilotstudio.client" >/dev/null 2>&1; then

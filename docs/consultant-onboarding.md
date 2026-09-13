@@ -36,9 +36,10 @@ uv run urt validate --spec /tmp/urt_smoke.yaml
   - `deepeval==4.2.2`
 - Promptfoo is installed locally (default: `~/.urt-tools/promptfoo`, package `promptfoo@0.123.0`) and exposed as `promptfoo`
 - Copilot Studio SDK: `uv sync --extra mcs` (pins `microsoft-agents-copilotstudio-client==1.5.0` from PyPI)
-- Power CAT is invoked with `npx` at runtime:
-  - `@microsoft/copilot-studio-kit-cli`
-- Note: `@microsoft/copilot-studio-kit-cli` may require authenticated npm access in some environments.
+- Power CAT has no public npm CLI. Canonical source is the Copilot Studio Kit:
+  - https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit (Power Platform solution + `agent-review-pipeline` GitHub Action)
+  - If your org ships a local `copilot-studio-kit` launcher, point `engines.powercat.params.command` at it
+  - Do not invent an npm name and do not treat `powerplatform-review-tool` as Power CAT
 - Giskard v3 is invoked with `uvx` (`giskard[scan]==3.0.0`) because the meta-package does not expose a standalone `giskard` binary.
 
 This avoids dependency conflicts across engines (especially `pydantic` version conflicts).

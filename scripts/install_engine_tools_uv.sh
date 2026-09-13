@@ -38,5 +38,5 @@ done
 echo "Python engine CLIs installed."
 echo "Promptfoo local binary is installed by scripts/install_promptfoo_local.sh."
 echo "MCS GA client is installed with: uv sync --extra mcs"
-echo "Power CAT CLI runs via npx at runtime (@microsoft/copilot-studio-kit-cli)."
+echo "Power CAT has no public npm CLI. Canonical source: https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit"
 echo "Giskard v3 is launched via uvx because the scan extra does not publish a standalone CLI binary."

@@ -12,6 +12,7 @@ from typing import Any
 from .config import dump_run_spec, load_run_spec
 from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
 from .engine_pins import pin
+from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .report import evaluate_gate, load_findings, render_csv, render_html, render_markdown
 from .gateway import load_gateway_config, serve_gateway
@@ -68,7 +69,7 @@ def _template_payload() -> dict[str, Any]:
                     "command": pin("powerpwn").uvx_command,
                 },
             },
-            {"name": "powercat", "params": {"command": "npx -y @microsoft/copilot-studio-kit-cli --help"}},
+            {"name": "powercat", "params": {"command": DEFAULT_COMMAND}},
             {"name": "deepteam", "params": {"command": pin("deepteam").uvx_command}},
             {"name": "inspect", "params": {"command": pin("inspect-ai").uvx_command}},
             {
