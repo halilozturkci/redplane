@@ -188,7 +188,7 @@ def _findings_from_results_object(
         if selected is None:
             continue
         primary, selected_name, raw_metric = selected
-        if not is_accuracy_style_metric(primary) and not is_accuracy_style_metric(selected_name):
+        if not is_accuracy_style_metric(selected_name):
             continue
         _, value = _inspect_score_polarity(raw_metric)
         # Accuracy-style aggregates are rates. A value below 1.0 means some

@@ -43,6 +43,10 @@ def test_smoke_yaml_files_exist_and_declare_smoke_kind() -> None:
 def test_smoke_engine_commands_are_launcher_presence() -> None:
     spec = load_run_spec(REPO / "templates" / "run_spec.smoke.yaml")
     by_name = {item.name: item for item in spec.engines}
+    pyrit_command = str(by_name["pyrit"].params.get("command") or "")
+    assert "import pyrit" in pyrit_command
+    assert "red_team_scan.py" not in pyrit_command
+    assert "script_path" not in by_name["pyrit"].params
     assert by_name["promptfoo"].params["command"] == "promptfoo --version"
     assert by_name["garak"].params["command"] == pin("garak").uvx_command
     assert "--help" in by_name["powerpwn"].params["command"] or "--version" in by_name["powerpwn"].params["command"]
@@ -65,6 +69,10 @@ def test_init_smoke_flag_writes_the_same_kind(tmp_path: Path) -> None:
     assert spec.metadata.get("spec_kind") == "smoke"
     payload = _template_payload()
     assert payload["metadata"]["spec_kind"] == "smoke"
+    pyrit_params = next(item["params"] for item in payload["engines"] if item["name"] == "pyrit")
+    assert "import pyrit" in str(pyrit_params.get("command") or "")
+    assert "red_team_scan.py" not in str(pyrit_params.get("command") or "")
+    assert "script_path" not in pyrit_params
 
 
 def test_referenced_eval_scripts_are_shipped_or_dropped() -> None:

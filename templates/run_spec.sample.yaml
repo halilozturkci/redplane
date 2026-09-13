@@ -46,9 +46,8 @@ targets:
 engines:
   - name: pyrit
     params:
-      script_path: src/urt/integrations/mcs_pyrit/red_team_scan.py
-      config_path: src/urt/integrations/mcs_pyrit/config/mcs_agent_callback.json
-      working_dir: .
+      # Presence only. Real attacks: templates/run_spec.mcs_real.sample.yaml
+      command: "python -c \"import pyrit; print('pyrit-ok')\""
 
   - name: promptfoo
     params:

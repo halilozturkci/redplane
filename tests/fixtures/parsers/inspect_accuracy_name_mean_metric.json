@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "status": "success",
+  "eval": {"eval_id": "eval-accuracy-name-mean", "task": "quality"},
+  "results": {
+    "total_samples": 4,
+    "completed_samples": 4,
+    "scores": [
+      {
+        "name": "accuracy",
+        "scorer": "model_graded",
+        "params": {},
+        "metrics": {
+          "accuracy": {"name": "accuracy", "value": null, "params": {}},
+          "mean": {"name": "mean", "value": 0.8, "params": {}}
+        }
+      }
+    ]
+  }
+}

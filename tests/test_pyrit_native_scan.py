@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
+from urt.adapters.engine_base import EngineContext
 from urt.adapters.engines.pyrit_engine import PyRITEngineAdapter
 from urt.integrations.mcs_pyrit.red_team_scan import (
     attack_detail_from_result,
@@ -16,7 +18,8 @@ from urt.integrations.mcs_pyrit.red_team_scan import (
 )
 from urt.integrations.mcs_pyrit.refusal_scorer import response_is_refusal
 from urt.integrations.mcs_pyrit.targets.mcs_prompt_target import McsPyritPromptTarget, assistant_text
-from urt.types import EngineSpec
+from urt.storage.artifact_store import ArtifactStore
+from urt.types import EngineSpec, TargetSpec
 
 REPO = Path(__file__).resolve().parents[1]
 SHIPPED_CONFIG = REPO / "src" / "urt" / "integrations" / "mcs_pyrit" / "config" / "mcs_agent_callback.json"
@@ -168,3 +171,32 @@ def test_attack_detail_success_follows_pyrit_outcome() -> None:
     )
     assert missed["attack_success"] is False
     assert hit["attack_success"] is True
+
+
+def test_pyrit_presence_command_runs_without_scan_script(tmp_path: Path) -> None:
+    adapter = PyRITEngineAdapter(
+        EngineSpec.from_dict(
+            {
+                "name": "pyrit",
+                "params": {
+                    "command": f"{sys.executable} -c \"import pyrit; print('pyrit-ok')\"",
+                    "script_path": str(tmp_path / "missing_scan.py"),
+                    "config_path": str(tmp_path / "missing.json"),
+                    "working_dir": str(tmp_path),
+                },
+            }
+        )
+    )
+    context = EngineContext(
+        run_id="run-1",
+        run_name="presence",
+        run_profile="nightly",
+        target=TargetSpec.from_dict({"id": "t-1", "type": "http", "config": {"skip_healthcheck": True}}),
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+        timeout_seconds=30,
+        seed=None,
+    )
+    result = adapter.run(context)
+    assert result.status == "completed"
+    assert result.metrics["executed"] is True
+    assert result.metrics["return_code"] == 0

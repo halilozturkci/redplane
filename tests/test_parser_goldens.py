@@ -147,6 +147,16 @@ def test_inspect_continuous_mean_aggregate_is_not_an_attack() -> None:
     assert all(item.success is not True for item in findings)
 
 
+def test_inspect_accuracy_named_block_with_only_mean_is_not_an_attack() -> None:
+    adapter = InspectEngineAdapter(_engine("inspect"))
+    findings = adapter._parse_output(
+        run_id="run-1",
+        target_id="t-1",
+        path=FIXTURES / "inspect_accuracy_name_mean_metric.json",
+    )
+    assert findings == []
+
+
 def test_inspect_legacy_tests_list_still_parses() -> None:
     adapter = InspectEngineAdapter(_engine("inspect"))
     findings = adapter._parse_output(

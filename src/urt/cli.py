@@ -60,9 +60,7 @@ def _template_payload() -> dict[str, Any]:
             {
                 "name": "pyrit",
                 "params": {
-                    "script_path": "src/urt/integrations/mcs_pyrit/red_team_scan.py",
-                    "config_path": "src/urt/integrations/mcs_pyrit/config/mcs_agent_callback.json",
-                    "working_dir": ".",
+                    "command": 'python -c "import pyrit; print(\'pyrit-ok\')"',
                 },
             },
             {"name": "promptfoo", "params": {"command": "promptfoo --version"}},
