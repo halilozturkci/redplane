@@ -390,6 +390,7 @@ class TestInspectEvalEvaluator:
         scores = adapter._parse_inspect_output(payload, 0.5)
         assert len(scores) == 2
         assert any(s.metric == "accuracy/accuracy" and s.score == 0.85 for s in scores)
+        assert any(s.metric == "accuracy/stderr" and s.score == 0.03 for s in scores)
 
     def test_parse_sample_level(self):
         adapter = InspectEvalEvaluator(_make_spec("inspect_eval"))

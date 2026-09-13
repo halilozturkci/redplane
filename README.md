@@ -149,7 +149,7 @@ The network gateway is complementary: attack tools call `urt serve-gateway`'s `/
 
 | Engine | Primary focus |
 |---|---|
-| `pyrit` | Microsoft-style adversarial strategy scans with ASR output |
+| `pyrit` | Native PyRIT 1.x PromptSendingAttack scans with ASR-style output |
 | `promptfoo` | Assertion/dataset-based red-team checks and policy validation |
 | `garak` | Probe-heavy robustness scanning with detector scores |
 | `powerpwn` | Copilot Studio tenant recon and offensive posture checks |
@@ -442,7 +442,9 @@ For one-engine runs, keep a single `engines:` entry in the spec.
 ### PyRIT (`name: pyrit`)
 
 Primary use:
-- Microsoft-style adversarial strategy scans with ASR output
+- Native **PyRIT 1.x** `PromptSendingAttack` scans against a Copilot Studio callback target, with ASR-style `final_results.json`
+
+The runtime venv pins `pyrit>=1.1,<2` and `openai>=3,<4`. `azure-ai-evaluation` stays for the evaluator path and **does not** pull the `[redteam]` extra (that extra hard-pins pyrit 0.11, which cannot import against PyRIT 1.x).
 
 Params:
 
@@ -819,7 +821,7 @@ engines:
   - name: giskard
     params:
       command: >-
-        uvx --python 3.12 --from giskard==2.19.2 python
+        uvx --python 3.12 --from 'giskard[scan]==3.0.0' python
         /tmp/urt-real-attacks/giskard_real_scan.py
       output_json: /tmp/urt-real-attacks/giskard_results.json
 ```
@@ -911,7 +913,7 @@ evaluators:
     params:
       model: gpt-4.1-mini
       threshold: 0.5
-      command: "deepeval test run"
+      command: "uvx --from deepeval==4.2.2 deepeval --help"
       output_json: /tmp/deepeval_results.json
 ```
 

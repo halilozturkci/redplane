@@ -41,26 +41,36 @@ def test_runtime_does_not_depend_on_azure_ai_projects() -> None:
     assert all("azure-ai-projects" not in dep for dep in _runtime_deps())
 
 
-def test_openai_is_capped_below_v3() -> None:
+def test_openai_is_capped_to_v3() -> None:
     openai_deps = [dep for dep in _runtime_deps() if dep.startswith("openai")]
-    assert openai_deps == ["openai>=2.2,<3"]
+    assert openai_deps == ["openai>=3,<4"]
 
 
-def test_azure_ai_evaluation_floor_includes_redteam_extra() -> None:
+def test_azure_ai_evaluation_has_no_redteam_extra() -> None:
     matches = [dep for dep in _runtime_deps() if dep.startswith("azure-ai-evaluation")]
-    assert matches == ["azure-ai-evaluation[redteam]>=1.18.0"]
+    assert matches == ["azure-ai-evaluation>=1.18.0"]
+    assert not any("[redteam]" in dep for dep in _runtime_deps())
 
 
-def test_uv_lock_is_committed_with_openai_2x() -> None:
+def test_pyrit_is_direct_1x_runtime_dependency() -> None:
+    pyrit_deps = [dep for dep in _runtime_deps() if dep.startswith("pyrit")]
+    assert pyrit_deps == ["pyrit>=1.1,<2"]
+
+
+def test_uv_lock_is_committed_with_openai_3x_and_pyrit_1x() -> None:
     lock_path = ROOT / "uv.lock"
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert lock_path.is_file(), "uv.lock must be committed"
     assert "\nuv.lock\n" not in f"\n{gitignore}"
     lock_text = lock_path.read_text(encoding="utf-8")
     assert "azure-ai-projects" not in lock_text
-    match = re.search(r'(?m)^name = "openai"\nversion = "([^"]+)"', lock_text)
-    assert match is not None
-    assert match.group(1).startswith("2."), match.group(1)
+    openai = re.search(r'(?m)^name = "openai"\nversion = "([^"]+)"', lock_text)
+    assert openai is not None
+    assert openai.group(1).startswith("3."), openai.group(1)
+    pyrit = re.search(r'(?m)^name = "pyrit"\nversion = "([^"]+)"', lock_text)
+    assert pyrit is not None
+    assert pyrit.group(1).startswith("1."), pyrit.group(1)
+
 
 
 def test_toolchain_pins_are_node_22_22_and_promptfoo_0_123_0() -> None:

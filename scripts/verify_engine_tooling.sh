@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MISSING=0
-for cmd in uv npx garak powerpwn deepteam inspect; do
+for cmd in uv npx garak powerpwn deepteam inspect deepeval; do
   if command -v "${cmd}" >/dev/null 2>&1; then
     echo "OK: ${cmd}"
   else
@@ -40,12 +40,13 @@ uv run urt --help >/dev/null
 
 echo "Running engine smoke commands"
 # uv tool pins must match src/urt/engine_pins.py:
-# garak==0.17.0 powerpwn==6.0.0 deepteam==1.0.9 inspect-ai==0.3.263
+# garak==0.17.0 powerpwn==6.0.0 deepteam==1.0.9 inspect-ai==0.3.263 deepeval==4.2.2 giskard[scan]==3.0.0
 garak --version >/dev/null
 powerpwn --help >/dev/null
-deepteam --help >/dev/null
+uvx --from deepteam==1.0.9 --with sentry-sdk deepteam --help >/dev/null
 inspect --help >/dev/null
-uvx --python 3.12 --from giskard==2.19.2 python -c "import giskard; print(giskard.__version__)" >/dev/null
+deepeval --help >/dev/null
+uvx --python 3.12 --from 'giskard[scan]==3.0.0' python -c "from giskard.scan import vulnerability_scan; print('giskard-scan-ok')" >/dev/null
 "${PROMPTFOO_BIN}" --version >/dev/null
 
 POWERCAT_KIT="https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit"

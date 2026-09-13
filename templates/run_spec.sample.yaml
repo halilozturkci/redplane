@@ -58,7 +58,7 @@ engines:
 
   - name: deepteam
     params:
-      command: "uvx --from deepteam==1.0.9 deepteam --help"
+      command: "uvx --from deepteam==1.0.9 --with sentry-sdk deepteam --help"
       require_test_cases: true
 
   - name: inspect
@@ -67,7 +67,8 @@ engines:
 
   - name: giskard
     params:
-      command: 'uvx --python 3.12 --from giskard==2.19.2 python -c "import giskard; print(giskard.__version__)"'
+      command: >-
+        uvx --python 3.12 --from 'giskard[scan]==3.0.0' python -c "from giskard.scan import vulnerability_scan; print('giskard-scan-ok')"
 
 evaluators:
   - name: deepeval
@@ -75,7 +76,7 @@ evaluators:
     params:
       model: gpt-4.1-mini
       threshold: 0.5
-      command: "deepeval test run"
+      command: "uvx --from deepeval==4.2.2 deepeval --help"
       output_json: /tmp/deepeval_results.json
 
   - name: promptfoo_eval
@@ -93,7 +94,8 @@ evaluators:
   - name: giskard_eval
     metrics: [hallucination, toxicity, robustness]
     params:
-      command: "python -m giskard scan --output /tmp/giskard_scan.json"
+      command: >-
+        uvx --python 3.12 --from 'giskard[scan]==3.0.0' python -c "from giskard.scan import vulnerability_scan; print('giskard-scan-ok')"
       output_json: /tmp/giskard_scan.json
 
   - name: inspect_eval

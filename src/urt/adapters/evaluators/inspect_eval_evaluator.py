@@ -6,6 +6,13 @@ import shlex
 from typing import Any
 
 from ..evaluator_base import EvalContext
+from ..inspect_log import (
+    iter_block_metrics,
+    iter_payload_samples,
+    iter_result_score_metrics,
+    iter_sample_score_items,
+    result_scorer_block,
+)
 from ._command import CommandEvaluatorAdapter
 from ...types import EvalRunResult, EvalScore, UnifiedFinding
 
@@ -106,76 +113,51 @@ class InspectEvalEvaluator(CommandEvaluatorAdapter):
     def _parse_inspect_output(self, payload: dict[str, Any], threshold: float) -> list[EvalScore]:
         scores: list[EvalScore] = []
 
-        # Inspect AI eval log JSON: {"results": {"scorer": {...}, "scores": [...]}}
         results = payload.get("results", {})
         if isinstance(results, dict):
-            # Per-scorer metrics in results.scores
-            score_list = results.get("scores", [])
-            if isinstance(score_list, list):
-                for scorer_block in score_list:
-                    if not isinstance(scorer_block, dict):
-                        continue
-                    scorer_name = str(scorer_block.get("name", scorer_block.get("scorer", "unknown")))
-                    metrics = scorer_block.get("metrics", {})
-                    if isinstance(metrics, dict):
-                        for metric_name, metric_data in metrics.items():
-                            if isinstance(metric_data, dict):
-                                score_val = float(metric_data.get("value", metric_data.get("mean", 0.0)))
-                            else:
-                                score_val = float(metric_data) if metric_data is not None else 0.0
-                            full_name = f"{scorer_name}/{metric_name}" if scorer_name != "unknown" else metric_name
-                            scores.append(self._make_eval_score(
-                                full_name,
-                                score_val,
-                                threshold=threshold,
-                                metadata={"scorer": scorer_name, "raw": scorer_block},
-                            ))
+            for item in iter_result_score_metrics(results, skip_diagnostics=False):
+                scores.append(
+                    self._make_eval_score(
+                        self._metric_name(item.scorer, item.metric),
+                        self._metric_float(item.raw_value),
+                        threshold=threshold,
+                        metadata={"scorer": item.scorer, "raw": item.block},
+                    )
+                )
 
-            # Single scorer in results.scorer
             if not scores:
-                scorer = results.get("scorer", {})
-                if isinstance(scorer, dict):
+                scorer = result_scorer_block(results)
+                if scorer is not None:
                     scorer_name = str(scorer.get("name", "unknown"))
-                    metrics = scorer.get("metrics", {})
-                    if isinstance(metrics, dict):
-                        for metric_name, metric_data in metrics.items():
-                            if isinstance(metric_data, dict):
-                                score_val = float(metric_data.get("value", metric_data.get("mean", 0.0)))
-                            else:
-                                score_val = float(metric_data) if metric_data is not None else 0.0
-                            scores.append(self._make_eval_score(
+                    for metric_name, metric_data in iter_block_metrics(scorer, skip_diagnostics=False):
+                        scores.append(
+                            self._make_eval_score(
                                 metric_name,
-                                score_val,
+                                self._metric_float(metric_data),
                                 threshold=threshold,
                                 metadata={"scorer": scorer_name},
-                            ))
+                            )
+                        )
 
-        # Inspect AI sample-level results
         if not scores:
-            samples = payload.get("samples", [])
-            if isinstance(samples, list):
-                sample_scores: dict[str, list[float]] = {}
-                for sample in samples:
-                    if not isinstance(sample, dict):
-                        continue
-                    sample_score = sample.get("score", sample.get("scores", {}))
-                    if isinstance(sample_score, dict):
-                        for metric_name, val in sample_score.items():
-                            if isinstance(val, dict):
-                                val = val.get("value", 0.0)
-                            if val is not None:
-                                sample_scores.setdefault(metric_name, []).append(float(val))
-                # Aggregate sample scores by mean
-                for metric_name, values in sample_scores.items():
-                    avg = sum(values) / len(values) if values else 0.0
-                    scores.append(self._make_eval_score(
+            sample_scores: dict[str, list[float]] = {}
+            for sample in iter_payload_samples(payload):
+                for metric_name, val in iter_sample_score_items(sample, prefer_scores=False):
+                    if isinstance(val, dict):
+                        val = val.get("value", 0.0)
+                    if val is not None:
+                        sample_scores.setdefault(str(metric_name), []).append(float(val))
+            for metric_name, values in sample_scores.items():
+                avg = sum(values) / len(values) if values else 0.0
+                scores.append(
+                    self._make_eval_score(
                         metric_name,
                         avg,
                         threshold=threshold,
                         metadata={"sample_count": len(values)},
-                    ))
+                    )
+                )
 
-        # Fallback: flat scores array
         if not scores:
             for key in ("scores", "evaluations"):
                 items = payload.get(key, [])
@@ -185,11 +167,23 @@ class InspectEvalEvaluator(CommandEvaluatorAdapter):
                             continue
                         metric = str(item.get("metric", item.get("name", "unknown")))
                         score_val = float(item.get("score", item.get("value", 0.0)))
-                        scores.append(self._make_eval_score(
-                            metric,
-                            score_val,
-                            threshold=float(item.get("threshold", threshold)),
-                            reason=str(item.get("reason", "")),
-                        ))
+                        scores.append(
+                            self._make_eval_score(
+                                metric,
+                                score_val,
+                                threshold=float(item.get("threshold", threshold)),
+                                reason=str(item.get("reason", "")),
+                            )
+                        )
 
         return scores
+
+    @staticmethod
+    def _metric_name(scorer_name: str, metric_name: str) -> str:
+        return f"{scorer_name}/{metric_name}" if scorer_name != "unknown" else metric_name
+
+    @staticmethod
+    def _metric_float(metric_data: object) -> float:
+        if isinstance(metric_data, dict):
+            return float(metric_data.get("value", metric_data.get("mean", 0.0)))
+        return float(metric_data) if metric_data is not None else 0.0
