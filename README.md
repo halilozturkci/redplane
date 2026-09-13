@@ -235,7 +235,7 @@ uv run urt --help
 uv run pytest
 
 # 4) Validate a sample run spec
-uv run urt validate --spec templates/run_spec.sample.yaml
+uv run urt validate --spec templates/run_spec.smoke.yaml
 
 # 5) Start the OpenAI-compatible network gateway
 uv run urt serve-gateway --config templates/gateway_config.sample.yaml
@@ -271,7 +271,7 @@ uv sync --extra dev --extra mcs
 ## CLI Commands
 
 ```bash
-uv run urt init --output run_spec.yaml
+uv run urt init --smoke --output run_spec.yaml
 uv run urt validate --spec run_spec.yaml
 uv run urt probe --spec run_spec.yaml
 uv run urt run --spec run_spec.yaml
@@ -885,6 +885,9 @@ Evaluators receive an `EvalContext` containing:
 - Artifact store for writing output files
 - **Red-team engine findings** from the current run (for eval-after-attack patterns)
 - **Engine run results** for cross-referencing
+- **Sidecar path** `raw/<evaluator>/<target>_engine_findings.json` and env `URT_ENGINE_FINDINGS_PATH`
+
+Evaluator CLIs do not import DeepEval/Giskard/Inspect as Python packages. Point `custom_script` at `scripts/eval_engine_findings.py` to score refusals from the sidecar without an LLM judge.
 
 ### Evaluator Usage Cookbook
 
@@ -913,8 +916,8 @@ evaluators:
     params:
       model: gpt-4.1-mini
       threshold: 0.5
-      command: "uvx --from deepeval==4.2.2 deepeval --help"
-      output_json: /tmp/deepeval_results.json
+      command: "uvx --from deepeval==4.2.2 deepeval test run"
+      output_json: /tmp/urt-real-eval/deepeval_results.json
 ```
 
 Output parsing: DeepEval outputs `test_results[]` with per-metric scores. The adapter maps these to normalized `EvalScore` objects. Supports both `test_results[].metrics_data[]` format and flat `scores[]` fallback.
@@ -971,7 +974,7 @@ evaluators:
   - name: azure_ai_eval
     metrics: [groundedness, relevance, coherence, content_safety]
     params:
-      script_path: scripts/run_azure_eval.py
+      command: "python your_azure_eval.py --output /tmp/azure_eval_results.json"
       output_json: /tmp/azure_eval_results.json
       azure_project_endpoint: ${AZURE_PROJECT_ENDPOINT}
 ```
@@ -1033,7 +1036,7 @@ Example:
 evaluators:
   - name: inspect_eval
     params:
-      command: "inspect eval tasks/safety_eval.py --model openai/gpt-4.1-mini"
+      command: "inspect eval your_task.py --model openai/gpt-4.1-mini"
       output_json: /tmp/inspect_eval_results.json
       log_dir: /tmp/inspect_logs
 ```
@@ -1088,8 +1091,8 @@ Example:
 evaluators:
   - name: custom_script
     params:
-      command: "python scripts/custom_eval.py --input findings.json --output /tmp/custom_scores.json"
-      output_json: /tmp/custom_scores.json
+      command: "python scripts/eval_engine_findings.py --output /tmp/urt-eval-after-attack/refusal_scores.json"
+      output_json: /tmp/urt-eval-after-attack/refusal_scores.json
 ```
 
 ### Combined Example: Engines + Evaluators
@@ -1129,14 +1132,14 @@ evaluators:
   - name: azure_ai_eval
     metrics: [groundedness, relevance, content_safety]
     params:
-      script_path: scripts/run_azure_eval.py
+      command: "python your_azure_eval.py --output /tmp/azure_eval_results.json"
       output_json: /tmp/azure_eval_results.json
       azure_project_endpoint: ${AZURE_PROJECT_ENDPOINT}
 
   - name: custom_script
     params:
-      command: "python scripts/domain_eval.py"
-      output_json: /tmp/domain_scores.json
+      command: "python scripts/eval_engine_findings.py --output /tmp/urt-eval-after-attack/refusal_scores.json"
+      output_json: /tmp/urt-eval-after-attack/refusal_scores.json
 
 policy_profiles: [owasp_llm, owasp_agentic, mitre_atlas]
 budget:
@@ -1170,20 +1173,24 @@ Reports (`report.md`, `report.html`) include a dedicated **Evaluation Results** 
 
 ---
 
-## Example: All Engines in One Run
+## Example: Smoke vs real runs
 
-Use the sample and customize:
+`templates/run_spec.sample.yaml` and `templates/run_spec.smoke.yaml` are **launcher presence only** (`--help` / `--version` / Giskard import). `urt init` writes that smoke spec. A completed smoke run is not an assessment.
+
+For real attacks use a per-engine sample:
 
 ```bash
-cp templates/run_spec.sample.yaml run_spec.all_engines.yaml
-uv run urt validate --spec run_spec.all_engines.yaml
-uv run urt run --spec run_spec.all_engines.yaml
+uv run urt validate --spec templates/run_spec.smoke.yaml
+uv run urt validate --spec templates/run_spec.mcs_real.sample.yaml
+uv run urt validate --spec templates/run_spec.promptfoo_dataset.sample.yaml
+uv run urt validate --spec templates/run_spec.eval_after_attack.sample.yaml
 ```
 
 Recommended for strict real runs:
 - set `fail_open: false` for engines you require
 - keep `deepteam.params.require_test_cases: true`
 - keep output paths unique per engine
+- do not point `output_json` at a file the command will not write
 
 ## Output, Reports, and Audit Format
 

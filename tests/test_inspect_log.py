@@ -5,6 +5,7 @@ from __future__ import annotations
 from urt.adapters.inspect_log import (
     DIAGNOSTIC_METRIC_NAMES,
     as_number,
+    is_accuracy_style_metric,
     iter_result_score_metrics,
     iter_sample_score_items,
     primary_result_metric,
@@ -56,6 +57,25 @@ def test_primary_result_metric_drops_stderr_for_engine_aggregates() -> None:
         },
     }
     assert primary_result_metric(other) == ("custom", "f1", {"value": 0.4})
+    null_primary = {
+        "name": "accuracy",
+        "metrics": {
+            "accuracy": {"value": None},
+            "stderr": {"value": 0.1},
+            "f1": {"value": 0.4},
+        },
+    }
+    assert primary_result_metric(null_primary) == ("accuracy", "f1", {"value": 0.4})
+    only_null = {
+        "name": "accuracy",
+        "metrics": {
+            "accuracy": {"value": None},
+            "stderr": {"value": 0.2},
+        },
+    }
+    assert primary_result_metric(only_null) is None
+    assert is_accuracy_style_metric("accuracy") is True
+    assert is_accuracy_style_metric("mean") is False
 
 
 def test_sample_score_items_engine_prefers_scores_key() -> None:

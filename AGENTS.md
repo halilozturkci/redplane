@@ -16,8 +16,9 @@
 - `uv sync` — install/update Python dependencies into the project environment.
 - `uv sync --extra mcs` — add the Copilot Studio GA client (`microsoft-agents-copilotstudio-client==1.5.0`). Full bootstrap already passes this extra.
 - `uv run urt --help` — verify CLI wiring and available subcommands.
-- `uv run urt validate --spec templates/run_spec.sample.yaml` — validate a run spec.
-- `uv run urt run --spec templates/run_spec.sample.yaml` — execute a red-team run.
+- `uv run urt validate --spec templates/run_spec.smoke.yaml` — validate the smoke run spec
+- `uv run urt validate --spec templates/run_spec.mcs_real.sample.yaml` — validate a real MCS spec
+- `uv run urt run --spec templates/run_spec.mcs_real.sample.yaml` — execute a real red-team run
 - `uv run urt serve-gateway --config templates/gateway_config.sample.yaml` — start gateway.
 - `uv run pytest` — run the full test suite.
 - CI on pull requests and `main`: Node floor check, `uv lock --check`, `uv sync --extra dev --frozen`, pytest, `uv run urt --help`.

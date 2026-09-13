@@ -149,6 +149,9 @@ def build_runtime_env(context: Any) -> dict[str, str]:
     profile = getattr(context, "run_profile", None)
     if profile:
         env["URT_RUN_PROFILE"] = str(profile)
+    findings_path = getattr(context, "engine_findings_path", None)
+    if findings_path:
+        env["URT_ENGINE_FINDINGS_PATH"] = str(findings_path)
     return env
 
 

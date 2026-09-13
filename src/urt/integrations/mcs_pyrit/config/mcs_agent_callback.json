@@ -1,28 +1,24 @@
 {
-  "_comment": "PyRIT 1.x MCS scan. azure_ai_project is ignored (Azure RedTeam extra was dropped).",
-  
-  "azure_ai_project": {
-    "project_endpoint": "${AZURE_PROJECT_ENDPOINT}"
-  },
-  
+  "_comment": "PyRIT 1.x MCS scan. Azure Foundry RedTeam extra was dropped; do not interpolate unused Azure project env vars.",
+
   "mcs_agent": {
     "tenant_id": "${TENANT_ID}",
     "app_client_id": "${APP_CLIENT_ID}",
     "environment_id": "${ENVIRONMENT_ID}",
     "agent_identifier": "${AGENT_IDENTIFIER}"
   },
-  
+
   "target": {
     "type": "mcs_agent_callback"
   },
-  
+
   "red_team": {
     "risk_categories": ["Violence", "HateUnfairness", "Sexual", "SelfHarm"],
-    "attack_strategies": ["EASY"],
+    "attack_strategies": ["PromptSending"],
     "num_objectives": 1,
-    "custom_prompts_path": ""
+    "custom_prompts_path": "src/urt/integrations/mcs_pyrit/config/custom_prompt_data/prompts.json"
   },
-  
+
   "scan": {
     "name": "MCS-Agent-Scan"
   }

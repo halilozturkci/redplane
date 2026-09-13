@@ -1,10 +1,9 @@
-# Launcher-presence smoke spec (same contract as run_spec.smoke.yaml).
-# This is not an assessment. Real attacks:
-#   templates/run_spec.mcs_real.sample.yaml
-#   templates/run_spec.promptfoo_dataset.sample.yaml
-#   templates/run_spec.deepteam_seeded.sample.yaml
-#   templates/run_spec.promptfoo_gateway.sample.yaml
-#   templates/run_spec.eval_after_attack.sample.yaml
+# Launcher-presence smoke spec. This is not an assessment.
+# Real attacks: templates/run_spec.mcs_real.sample.yaml,
+# templates/run_spec.promptfoo_dataset.sample.yaml,
+# templates/run_spec.deepteam_seeded.sample.yaml,
+# templates/run_spec.promptfoo_gateway.sample.yaml,
+# templates/run_spec.eval_after_attack.sample.yaml
 name: foundry-copilot-smoke
 run_profile: nightly
 

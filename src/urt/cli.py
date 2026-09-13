@@ -20,9 +20,14 @@ from .gateway.config import GatewayConfigError
 
 
 def _template_payload() -> dict[str, Any]:
+    """Launcher-presence smoke spec. Real attacks live in per-engine sample YAMLs."""
     return {
-        "name": "foundry-copilot-nightly",
+        "name": "foundry-copilot-smoke",
         "run_profile": "nightly",
+        "metadata": {
+            "spec_kind": "smoke",
+            "description": "Launcher presence only. Not an assessment. See templates/run_spec.mcs_real.sample.yaml and other *.sample.yaml files for real runs.",
+        },
         "targets": [
             {
                 "id": "copilot-prod",
@@ -128,7 +133,15 @@ def _orchestrator(args: argparse.Namespace) -> Orchestrator:
 def cmd_init(args: argparse.Namespace) -> int:
     payload = _template_payload()
     dump_run_spec(args.output, payload)
-    print(f"Created run spec template at {args.output}")
+    print(f"Created smoke run spec at {args.output}")
+    print(
+        "This is launcher presence only. For real attacks use "
+        "templates/run_spec.mcs_real.sample.yaml, "
+        "templates/run_spec.promptfoo_dataset.sample.yaml, "
+        "templates/run_spec.deepteam_seeded.sample.yaml, "
+        "templates/run_spec.promptfoo_gateway.sample.yaml, or "
+        "templates/run_spec.eval_after_attack.sample.yaml."
+    )
     return 0
 
 
@@ -326,8 +339,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init", help="Create a sample run spec")
+    p_init = sub.add_parser("init", help="Create a smoke run spec (launcher presence only)")
     p_init.add_argument("--output", default="run_spec.yaml", help="Output run spec path")
+    p_init.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Write a launcher-presence smoke spec (this is the default)",
+    )
     p_init.set_defaults(func=cmd_init)
 
     p_validate = sub.add_parser("validate", help="Validate a run spec")
