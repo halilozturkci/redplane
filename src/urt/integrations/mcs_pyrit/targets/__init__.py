@@ -1,6 +1,4 @@
-"""Target implementations for internal MCS red-team integration."""
+"""Target implementations for internal MCS red-team integration.
 
-from .mcs_agent_callback import McsAgentCallbackTarget, McsAgentConfig
-
-__all__ = ["McsAgentCallbackTarget", "McsAgentConfig"]
-
+Import submodules directly. ``mcs_agent_callback`` needs the ``mcs`` extra.
+"""
