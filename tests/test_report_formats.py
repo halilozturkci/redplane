@@ -48,3 +48,42 @@ def test_report_formats_render():
     assert "URT Report" in md
     assert "<html" in html.lower()
     assert "finding_id,run_id,target_id" in csv_text
+
+
+def test_render_html_escapes_attacker_controlled_text():
+    payload = "<script>alert('xss')</script><img src=x onerror=alert(1)>"
+    scorecard = {
+        "run_id": "run-<b>id</b>",
+        "total_findings": 1,
+        "asr_overall": 0.0,
+        "critical": 0,
+        "high": 1,
+        "medium": 0,
+        "low": 0,
+        "info": 0,
+        "eval_scores": {"<metric>": 0.5},
+        "eval_pass_rate": 0.5,
+    }
+    findings = [
+        {
+            "finding_id": "f1",
+            "run_id": "r1",
+            "target_id": "<target>",
+            "engine": "<engine>",
+            "severity": "high",
+            "category": "<category>",
+            "description": payload,
+        }
+    ]
+
+    html = render_html(scorecard, findings)
+
+    assert "<script>" not in html
+    assert "<img" not in html
+    assert "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "<td>&lt;target&gt;</td>" in html
+    assert "<td>&lt;engine&gt;</td>" in html
+    assert "<td>&lt;category&gt;</td>" in html
+    assert "<td>&lt;metric&gt;</td>" in html
+    assert "run-&lt;b&gt;id&lt;/b&gt;" in html
+    assert "<b>id</b>" not in html
