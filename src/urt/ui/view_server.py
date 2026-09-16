@@ -1,0 +1,178 @@
+"""`urt view <run_id>`: serve one run directory on loopback (Inspect `view` model).
+
+Stdlib only, no SQLite, no API. `/` is `report.html` (the self-contained viewer);
+every other path is a bundle file resolved with the same confinement rules as
+the API (`ArtifactStore.resolve_artifact`), served with the same media-type and
+header policy, and subject to the same pre-1.1 allowlist: a legacy bundle may
+hold expanded credentials, so only aggregates and rendered reports are served.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import socket
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+from ..constants import (
+    ARTIFACT_ATTACHMENT_MEDIA_TYPES,
+    ARTIFACT_INLINE_MEDIA_TYPES,
+    ARTIFACT_RESPONSE_HEADERS,
+    LEGACY_RAW_DOWNLOAD_ALLOWLIST,
+    REDACTED_BUNDLE_MIN_VERSION,
+)
+from ..storage.artifact_store import ArtifactPathError, ArtifactStore
+
+LOOPBACK_NAMES = {"localhost", "ip6-localhost", "ip6-loopback"}
+VIEWER_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+class LoopbackOnlyError(ValueError):
+    """Raised when a viewer is asked to bind anything but a loopback address."""
+
+
+def is_loopback_host(host: str) -> bool:
+    candidate = host.strip().strip("[]").lower()
+    if candidate in LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
+def _parse_version(value: object) -> tuple[int, ...]:
+    if value is None:
+        return (0,)
+    try:
+        return tuple(int(part) for part in str(value).split("."))
+    except ValueError:
+        return (0,)
+
+
+def bundle_format_version(run_dir: Path) -> str | None:
+    manifest = run_dir / "run_manifest.json"
+    if not manifest.is_file():
+        return None
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = payload.get("bundle_format_version") if isinstance(payload, dict) else None
+    return None if version is None else str(version)
+
+
+class RunDirHandler(BaseHTTPRequestHandler):
+    server_version = "RedplaneView/0.1"
+    sys_version = ""
+    # Set by build_view_server.
+    store: ArtifactStore
+    run_id: str
+    legacy: bool
+    version: str | None
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        # Quiet by default; the CLI prints the URL. Requests carry finding ids.
+        return
+
+    def do_GET(self) -> None:  # noqa: N802
+        relative = unquote(urlsplit(self.path).path).lstrip("/") or "report.html"
+        if self.legacy and relative not in LEGACY_RAW_DOWNLOAD_ALLOWLIST:
+            self._text(
+                HTTPStatus.CONFLICT,
+                f"Bundle format version {self.version or 'unknown'} predates write-time redaction "
+                f"({REDACTED_BUNDLE_MIN_VERSION}); only {', '.join(LEGACY_RAW_DOWNLOAD_ALLOWLIST)} are served "
+                "for such bundles because other files may contain expanded credentials.",
+            )
+            return
+        try:
+            path = self.store.resolve_artifact(self.run_id, relative)
+        except ArtifactPathError:
+            self._text(HTTPStatus.BAD_REQUEST, "Invalid artifact path")
+            return
+        except FileNotFoundError:
+            self._text(HTTPStatus.NOT_FOUND, "Not found")
+            return
+        self._file(path)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self.do_GET()
+
+    def _text(self, status: HTTPStatus, message: str) -> None:
+        body = (message + "\n").encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        for key, value in VIEWER_HEADERS.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _file(self, path: Path) -> None:
+        suffix = path.suffix.lower()
+        payload = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        if suffix == ".html":
+            # The viewer itself: rendered by us, escaped, carrying its own CSP meta.
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            headers = VIEWER_HEADERS
+        elif suffix in ARTIFACT_INLINE_MEDIA_TYPES:
+            self.send_header("Content-Type", ARTIFACT_INLINE_MEDIA_TYPES[suffix])
+            headers = ARTIFACT_RESPONSE_HEADERS
+        else:
+            media = ARTIFACT_ATTACHMENT_MEDIA_TYPES.get(suffix, "application/octet-stream")
+            self.send_header("Content-Type", media)
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            headers = ARTIFACT_RESPONSE_HEADERS
+        self.send_header("Content-Length", str(len(payload)))
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(payload)
+
+
+class ViewServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class ViewServer6(ViewServer):
+    address_family = socket.AF_INET6
+
+
+def build_view_server(run_dir: str | Path, *, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+    """Bind a viewer for `run_dir`. Refuses non-loopback hosts; there is no override."""
+    root = Path(run_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Run directory not found: {root}")
+    if not is_loopback_host(host):
+        raise LoopbackOnlyError(
+            f"urt view binds loopback only; refusing host {host!r}. Use an SSH tunnel to reach it remotely."
+        )
+    version = bundle_format_version(root)
+
+    class Handler(RunDirHandler):
+        pass
+
+    Handler.store = ArtifactStore(root.parent)
+    Handler.run_id = root.name
+    Handler.legacy = _parse_version(version) < _parse_version(REDACTED_BUNDLE_MIN_VERSION)
+    Handler.version = version
+
+    bind_host = host.strip().strip("[]")
+    server_cls: type[ThreadingHTTPServer] = ViewServer
+    try:
+        if ipaddress.ip_address(bind_host).version == 6:
+            server_cls = ViewServer6
+    except ValueError:
+        pass
+    return server_cls((bind_host, port), Handler)

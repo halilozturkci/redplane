@@ -21,6 +21,7 @@ from .gateway.config import GatewayConfigError
 from .gateway.redaction import redact_payload
 from .ui import load_bundle
 from .ui.render import render_run_page
+from .ui.view_server import LoopbackOnlyError, build_view_server
 
 
 def _template_payload() -> dict[str, Any]:
@@ -330,6 +331,33 @@ def cmd_waivers_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve_view(server) -> None:
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    run_dir = Path(args.artifact_root) / args.run_id
+    if "/" in args.run_id or "\\" in args.run_id or not run_dir.is_dir():
+        print(f"Run directory not found: {run_dir}", file=sys.stderr)
+        return 1
+    try:
+        server = build_view_server(run_dir, host=args.host, port=args.port)
+    except LoopbackOnlyError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    host, port = server.server_address[0], server.server_address[1]
+    shown_host = f"[{host}]" if ":" in str(host) else host
+    print(f"Serving {args.run_id} from {run_dir}")
+    print(f"Open http://{shown_host}:{port}/  (Ctrl+C to stop)")
+    _serve_view(server)
+    return 0
+
+
 def cmd_serve_api(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -453,6 +481,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_waivers_create.add_argument("--expires-at", required=True, help="ISO-8601 expiry timestamp")
     p_waivers_create.add_argument("--waiver-id", help="Optional stable waiver id")
     p_waivers_create.set_defaults(func=cmd_waivers_create)
+
+    p_view = sub.add_parser(
+        "view", help="Serve one run directory (report.html viewer + bundle files) on loopback"
+    )
+    p_view.add_argument("run_id", help="Run ID (directory name under --artifact-root)")
+    p_view.add_argument("--host", default="127.0.0.1", help="Loopback address only (default 127.0.0.1)")
+    p_view.add_argument("--port", type=int, default=8765, help="Port (0 picks a free port)")
+    p_view.set_defaults(func=cmd_view)
 
     p_api = sub.add_parser("serve-api", help="Run REST API")
     p_api.add_argument("--host", default="127.0.0.1")
