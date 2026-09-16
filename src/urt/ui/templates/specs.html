@@ -35,7 +35,7 @@
 </ul>
 <p class="note">A template is labelled <strong>smoke</strong> only when its <code>metadata.spec_kind</code> says so (launcher presence, not an assessment); everything else is shown as <strong>real</strong>.</p>
 
-<div class="builder">
+<div class="builder" id="builder">
 <section>
 <h2>Form</h2>
 <form method="post" action="/ui/specs/build" class="spec-form">
@@ -103,7 +103,7 @@
   <div class="actions">
     <button type="submit">Validate</button>
     <button type="submit" formaction="/ui/specs/probe" hx-post="/ui/specs/probe">Probe targets</button>
-    <button type="submit" formaction="/ui/specs/load" formmethod="post" hx-post="/ui/specs/load" hx-target="body" hx-select="body" hx-swap="outerHTML">← Load YAML into form</button>
+    <button type="submit" formaction="/ui/specs/load" formmethod="post" hx-post="/ui/specs/load" hx-target="#builder" hx-select="#builder" hx-swap="outerHTML">← Load YAML into form</button>
   </div>
 </form>
 <div id="spec-result" class="spec-result">
