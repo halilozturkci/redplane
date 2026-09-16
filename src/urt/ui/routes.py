@@ -160,13 +160,13 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 
     def page(template: str, request: Request, status_code: int = 200, **context: Any) -> HTMLResponse:
-        token = csrf_token_for(request)
+        nonce, token = csrf_token_for(request)
         response = html(
             render_template(template, mode="served", csrf_token=token, csrf_field=CSRF_FIELD, **context),
             status_code=status_code,
         )
-        if request.cookies.get(CSRF_COOKIE) != token:
-            set_csrf_cookie(response, token)
+        if request.cookies.get(CSRF_COOKIE) != nonce:
+            set_csrf_cookie(response, nonce)
         return response
 
     def default_expiry() -> str:

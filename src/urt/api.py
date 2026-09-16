@@ -30,6 +30,7 @@ from .orchestrator import Orchestrator
 from .policy.waivers import waiver_is_active
 from .report import parse_eval_min_pass_rate
 from .storage.artifact_store import ArtifactPathError
+from .storage.metadata_store import WaiverExistsError, WaiverRevokedError
 from .types import RunSpec, ValidationError
 from .ui.routes import mount_ui
 
@@ -219,6 +220,8 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
 
         try:
             return orch.create_waiver(waiver_payload)
+        except WaiverExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
@@ -243,8 +246,8 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
 
     @app.patch("/v1/waivers/{waiver_id}")
     def patch_waiver(waiver_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Only `expires_at` is mutable. `{"revoke": true}` sets it to now. Waivers are
-        never deleted; every change is appended to the waiver's event history."""
+        """Only `expires_at` is mutable. `{"revoke": true}` sets it to now and is terminal.
+        Waivers are never deleted; every change is appended to the waiver's event history."""
         allowed = {"expires_at", "revoke"}
         unknown = sorted(set(payload) - allowed)
         if unknown or not payload:
@@ -252,11 +255,16 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
                 status_code=400,
                 detail=f"Only {sorted(allowed)} may be patched (append-only: reason/owner/control never change); got {unknown}",
             )
+        revoke = payload.get("revoke")
+        if revoke is not None and revoke is not True:
+            raise HTTPException(status_code=400, detail="revoke must be the JSON boolean true")
         try:
-            if payload.get("revoke"):
+            if revoke is True:
                 row = orch.revoke_waiver(waiver_id)
             else:
                 row = orch.update_waiver_expiry(waiver_id, str(payload["expires_at"]))
+        except WaiverRevokedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if row is None:
