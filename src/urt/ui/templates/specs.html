@@ -4,10 +4,12 @@
 {% block content %}
 <h1>Spec builder</h1>
 <p class="note">
-  Build or paste a RunSpec, validate it and probe its targets. Nothing here runs an assessment: launching
-  runs stays on <code>urt run</code> until async runs land. Credentials go in as <code>${VAR}</code>
-  references only; the server reports whether a variable is set, never its value, and the resolved spec is
-  shown redacted. The form covers the common shape (one target); edit the YAML for anything else.
+  Build or paste a RunSpec, validate it, probe its targets and queue it with <strong>Run</strong>. A queued
+  run executes in the background on this server (one at a time, in order) and lands on its own page with
+  live stage events; <code>urt run</code> does the same from a shell. Credentials go in as <code>${VAR}</code>
+  references only; the server reports whether a variable is set, never its value, the resolved spec is
+  shown redacted, and a literal credential is refused before anything is queued. The form covers the common
+  shape (one target); edit the YAML for anything else.
 </p>
 {% if error %}<div class="banner error">{{ error }}</div>{% endif %}
 
@@ -104,7 +106,9 @@
     <button type="submit">Validate</button>
     <button type="submit" formaction="/ui/specs/probe" hx-post="/ui/specs/probe">Probe targets</button>
     <button type="submit" formaction="/ui/specs/load" formmethod="post" hx-post="/ui/specs/load" hx-target="#builder" hx-select="#builder" hx-swap="outerHTML">← Load YAML into form</button>
+    <button type="submit" formaction="/ui/specs/run" hx-post="/ui/specs/run" class="run" title="Validate, then queue this spec as a background run and open its page">Run (queue)</button>
   </div>
+  <p class="note">Run validates first; a real spec attacks the configured target. Check the smoke / real badge before queueing.</p>
 </form>
 <div id="spec-result" class="spec-result">
   {% if validation %}
