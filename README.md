@@ -88,7 +88,7 @@ Both faces express the same principle: **Redplane commands the tools that attack
 
 **Access & integration**
 - CLI for the full lifecycle (`init → validate → probe → run → waivers → report → gate → runs/findings/artifacts`).
-- REST control-plane API (`urt serve-api`) for programmatic runs and querying.
+- REST control-plane API (`urt serve-api`) for programmatic runs and querying, with read-only HTML pages at `/ui` (runs list, run detail with gate panel, findings explorer with transcripts) — server-rendered, vendored HTMX, no build step, loopback by default.
 - OpenAI-compatible network gateway (`urt serve-gateway`) with header/model/path routing, session handling, PII & header redaction, and audit logging.
 
 ## Capabilities at a Glance
@@ -285,6 +285,7 @@ uv run urt waivers list
 uv run urt report --run-id <RUN_ID> --output-dir ./reports/<RUN_ID>
 uv run urt report --run-id <RUN_ID> --in-place            # refresh report.html (waiver state) inside the run dir
 uv run urt view <RUN_ID> --port 8765                       # loopback viewer for one run directory
+uv run urt serve-api --port 8000                           # JSON API + read-only /ui (loopback only by default)
 uv run urt gate --run-id <RUN_ID> --threshold high
 uv run urt gate --run-id <RUN_ID> --threshold high --explain   # list blocking + waived findings
 uv run urt serve-api --host 127.0.0.1 --port 8000
@@ -1351,6 +1352,30 @@ Endpoints:
 - `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists
 - `POST /v1/waivers`
 - `GET /v1/waivers`
+
+### `/ui`: read-only pages on the same server
+
+`urt serve-api` also serves HTML at `/ui`, rendered from the same Jinja2 partials
+as `report.html`, with [htmx 2.0.10](src/urt/ui/static/VENDOR.md) vendored (no
+CDN, no Node build). Every page works without JavaScript; htmx only swaps
+fragments in place.
+
+- `GET /ui[?target=&name_prefix=&gate_threshold=]` — runs list, newest first: name, profile, status (with last update for `running`), created, duration, targets, engines executed / skipped, critical and high counts, ASR, eval pass rate, gate verdict at the profile default or the chosen threshold.
+- `GET /ui/runs/{run_id}[?threshold=&ignore_waivers=]` — run detail: scorecard tiles and budget snapshot, **read-only gate panel** (threshold selector, ignore-waivers toggle, blocking and waived lists), framework coverage, evaluation results, probes, engine invocations, evaluator summaries, bundle files with sha256 linked through `/v1/runs/{id}/artifacts/…`, redacted resolved spec, links to `report.html` and the zip.
+- `GET /ui/runs/{run_id}/findings[?severity=&engine=&category=&sub_category=&target=&success=&waived=&kind=&q=&finding_id=]` — findings explorer: facets plus free-text search over id, description, attack vector and transcript; a drawer with description, confidence, framework chips, repro steps, evidence links and the per-engine transcript. Fragments: `/findings/table`, `/findings/detail?finding_id=`, `/gate`.
+- `GET /ui/static/{app.css,htmx.min.js}` — the only assets served.
+
+Security posture: Jinja2 autoescape everywhere (finding text and model output are
+attacker-controlled); response header `Content-Security-Policy: default-src 'none';
+script-src 'self'; style-src 'self'; …` with no inline scripts or styles (htmx runs
+with `allowEval`, `allowScriptTags` and indicator style injection disabled);
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control:
+no-store`. Pre-1.1 bundles are redacted at read time, labelled, and their
+non-allowlisted files are not linked (the API answers `409` for them anyway).
+There is **no authentication**: `serve-api` binds `127.0.0.1` and refuses any
+other `--host` unless `--unsafe-allow-non-loopback` is passed; reach a remote
+machine through an SSH tunnel instead. Read-only by design: waivers are the only
+mutation and they stay on the CLI/JSON API for now.
 
 `POST /v1/runs` is **synchronous**: the HTTP request blocks until the orchestrator
 returns. The only upper bound is the spec's `budget.max_duration_seconds` (profile
