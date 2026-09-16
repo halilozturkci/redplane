@@ -20,6 +20,8 @@ from .constants import (
     BUNDLE_FORMAT_VERSION,
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_METADATA_DB,
+    RUN_PROFILE_DEFAULTS,
+    SEVERITY_ORDER,
 )
 from .normalization import build_scorecard, normalize_findings
 from .redaction import redact_run_spec_payload
@@ -441,8 +443,80 @@ class Orchestrator:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         return self.metadata_store.get_run(run_id)
 
-    def list_runs(self) -> list[dict[str, Any]]:
-        return self.metadata_store.list_runs()
+    def list_runs(self, *, gate_threshold: str | None = None) -> list[dict[str, Any]]:
+        """Run rows enriched from the bundle (targets, engines, counts, ASR, gate summary).
+
+        Fields whose source file is absent (e.g. failed runs without a scorecard) are
+        None rather than zero. `gate_threshold` defaults to the run profile's
+        `gate_threshold`; pass one explicitly to evaluate every row at that level.
+        """
+        if gate_threshold is not None and gate_threshold.lower() not in SEVERITY_ORDER:
+            raise ValueError(f"Unsupported threshold: {gate_threshold}")
+        waivers = self.list_waivers()
+        return [
+            self._enrich_run_row(row, waivers=waivers, gate_threshold=gate_threshold)
+            for row in self.metadata_store.list_runs()
+        ]
+
+    def _enrich_run_row(
+        self,
+        row: dict[str, Any],
+        *,
+        waivers: list[dict[str, Any]],
+        gate_threshold: str | None,
+    ) -> dict[str, Any]:
+        run_id = row["run_id"]
+        scorecard = self.artifact_store.read_json(run_id, "scorecard.json")
+        summary = self.artifact_store.read_json(run_id, "run_summary.json") or {}
+        manifest = self.artifact_store.read_json(run_id, "run_manifest.json") or {}
+        resolved_spec = self.artifact_store.read_json(run_id, "resolved_spec.json") or {}
+
+        engine_summaries = summary.get("engine_summaries", [])
+        executed = sorted({s["engine"] for s in engine_summaries if s.get("status") != "skipped"})
+        skipped = sorted({s["engine"] for s in engine_summaries if s.get("status") == "skipped"} - set(executed))
+
+        enriched = dict(row)
+        enriched.update(
+            {
+                "targets": summary.get("targets") or [t.get("target_id") for t in resolved_spec.get("targets", [])],
+                "engines": summary.get("engines") or [e.get("name") for e in resolved_spec.get("engines", [])],
+                "evaluators": summary.get("evaluators") or [e.get("name") for e in resolved_spec.get("evaluators", [])],
+                "engines_executed": executed,
+                "engines_skipped": skipped,
+                "finding_count": scorecard.get("total_findings") if scorecard else None,
+                "severity_counts": (
+                    {level: scorecard.get(level) for level in ("critical", "high", "medium", "low", "info")}
+                    if scorecard
+                    else None
+                ),
+                "asr_overall": scorecard.get("asr_overall") if scorecard else None,
+                "eval_pass_rate": scorecard.get("eval_pass_rate") if scorecard else None,
+                "duration_seconds": manifest.get("duration_seconds"),
+                "bundle_format_version": manifest.get("bundle_format_version"),
+                "gate": self._gate_summary(row, waivers=waivers, threshold=gate_threshold),
+            }
+        )
+        return enriched
+
+    def _gate_summary(
+        self,
+        row: dict[str, Any],
+        *,
+        waivers: list[dict[str, Any]],
+        threshold: str | None,
+    ) -> dict[str, Any] | None:
+        findings_path = row.get("findings_path")
+        if not findings_path or not Path(findings_path).exists():
+            return None
+        profile_defaults = RUN_PROFILE_DEFAULTS.get(row.get("profile", ""), RUN_PROFILE_DEFAULTS["nightly"])
+        effective = (threshold or profile_defaults.get("gate_threshold", "high")).lower()
+        result = gate_result(load_findings(findings_path), threshold=effective, waivers=waivers)
+        return {
+            "threshold": effective,
+            "ok": result.ok,
+            "blocking_count": len(result.blocking),
+            "waived_count": len(result.waived),
+        }
 
     def get_findings(self, run_id: str) -> list[dict[str, Any]]:
         findings = self.metadata_store.get_findings(run_id)

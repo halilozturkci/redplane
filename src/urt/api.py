@@ -82,9 +82,17 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    def _check_threshold(threshold: str | None) -> None:
+        if threshold is not None and threshold.lower() not in SEVERITY_ORDER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported threshold '{threshold}'. Supported: {list(SEVERITY_ORDER)}",
+            )
+
     @app.get("/v1/runs")
-    def list_runs() -> list[dict[str, Any]]:
-        return orch.list_runs()
+    def list_runs(gate_threshold: str | None = Query(default=None)) -> list[dict[str, Any]]:
+        _check_threshold(gate_threshold)
+        return orch.list_runs(gate_threshold=gate_threshold)
 
     @app.post("/v1/runs")
     def create_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -165,11 +173,7 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
         ignore_waivers: bool = Query(default=False),
     ) -> dict[str, Any]:
         _require_run(run_id)
-        if threshold.lower() not in SEVERITY_ORDER:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported threshold '{threshold}'. Supported: {list(SEVERITY_ORDER)}",
-            )
+        _check_threshold(threshold)
         result = orch.gate(run_id, threshold=threshold, ignore_waivers=ignore_waivers)
         if result is None:
             raise HTTPException(status_code=404, detail="Findings not available for run")

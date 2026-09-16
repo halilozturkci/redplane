@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
+from ..constants import SEVERITY_ORDER
 from ..types import RunRecord, UnifiedFinding, WaiverRecord
 
 
@@ -179,7 +180,7 @@ class MetadataStore:
                        description, evidence_refs_json, repro_steps_json, mappings_json, metadata_json
                 FROM findings
                 WHERE run_id = ?
-                ORDER BY severity DESC, finding_id ASC
+                ORDER BY finding_id ASC
                 """,
                 (run_id,),
             ).fetchall()
@@ -193,6 +194,8 @@ class MetadataStore:
             item["mappings"] = json.loads(item.pop("mappings_json"))
             item["metadata"] = json.loads(item.pop("metadata_json"))
             parsed.append(item)
+        # Severity is a rank, not a word: sort by SEVERITY_ORDER (stable on finding_id).
+        parsed.sort(key=lambda item: -SEVERITY_ORDER.get(str(item["severity"]).lower(), -1))
         return parsed
 
     def create_waiver(self, waiver: WaiverRecord) -> None:

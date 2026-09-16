@@ -1292,11 +1292,14 @@ uv run urt serve-api --host 127.0.0.1 --port 8000
 
 Endpoints:
 - `GET /healthz`
-- `GET /v1/runs`
+- `GET /v1/runs[?gate_threshold=high]` — SQLite row plus bundle-derived fields: `targets`, `engines`, `evaluators`, `engines_executed`, `engines_skipped`, `finding_count`, `severity_counts`, `asr_overall`, `eval_pass_rate`, `duration_seconds`, `bundle_format_version`, `gate` (`threshold`, `ok`, `blocking_count`, `waived_count`; threshold defaults to the run profile's `gate_threshold`). Fields are `null` when the source file does not exist (failed runs), never zero-filled. `urt runs` prints the same rows.
 - `POST /v1/runs`
 - `GET /v1/runs/{run_id}`
-- `GET /v1/runs/{run_id}/findings`
-- `GET /v1/runs/{run_id}/artifacts`
+- `GET /v1/runs/{run_id}/findings` — sorted by severity rank (`SEVERITY_ORDER`), not lexically; each finding carries `evidence_artifacts` (bundle-relative form of the absolute `evidence_refs`, `null` for refs outside the run directory)
+- `GET /v1/runs/{run_id}/scorecard` · `/summary` · `/manifest` · `/invocations` — content of `scorecard.json`, `run_summary.json`, `run_manifest.json`, `engine_invocations.json`; `404` when the file is absent
+- `GET /v1/runs/{run_id}/artifacts` — `artifacts_index.json` (`path`, `size_bytes`, `sha256`)
+- `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`; HTML and unknown types are `Content-Disposition: attachment`
+- `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256
 - `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists
 - `POST /v1/waivers`
 - `GET /v1/waivers`
