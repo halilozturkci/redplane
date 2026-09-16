@@ -81,6 +81,17 @@
     }
   }
 
+  function openFromHash() {
+    var hash = window.location.hash;
+    if (hash.indexOf("#finding=") !== 0) { return; }
+    var wanted = decodeURIComponent(hash.slice("#finding=".length));
+    var node = document.querySelector('details.finding[data-finding-id="' + cssEscape(wanted) + '"]');
+    if (!node) { return; }
+    node.hidden = false;
+    node.open = true;
+    node.scrollIntoView();
+  }
+
   function wire() {
     FACETS.forEach(function (name) {
       var el = document.getElementById("facet-" + name);
@@ -101,13 +112,9 @@
       showGate(gate.value);
     }
 
-    // Deep link: #finding=<id> opens that finding.
-    var hash = window.location.hash;
-    if (hash.indexOf("#finding=") === 0) {
-      var wanted = decodeURIComponent(hash.slice("#finding=".length));
-      var node = document.querySelector('details.finding[data-finding-id="' + cssEscape(wanted) + '"]');
-      if (node) { node.open = true; node.scrollIntoView(); }
-    }
+    // Deep link: #finding=<id> opens that finding (also when clicked from the gate panel).
+    window.addEventListener("hashchange", openFromHash);
+    openFromHash();
     applyFilters();
     document.body.classList.add("js-ready");
   }

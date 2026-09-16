@@ -30,6 +30,7 @@ from .constants import (
 from .orchestrator import Orchestrator
 from .storage.artifact_store import ArtifactPathError
 from .types import RunSpec, ValidationError
+from .ui.routes import mount_ui
 
 # Bundle files exposed as JSON content (G1). Never accept a path from the client here.
 BUNDLE_JSON_ENDPOINTS = {
@@ -223,6 +224,7 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
     def list_waivers(target_id: str | None = Query(default=None)) -> list[dict[str, Any]]:
         return orch.list_waivers(target_id)
 
+    mount_ui(app, orch)
     return app
 
 

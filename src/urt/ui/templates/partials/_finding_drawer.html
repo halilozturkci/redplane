@@ -1,0 +1,10 @@
+{% set record = view.record %}
+<div class="finding-drawer" data-finding-id="{{ view.finding_id }}">
+  <h3>
+    <span class="badge sev-{{ view.severity }}">{{ view.severity }}</span>
+    {{ record.get("category", "") }}{% if record.get("sub_category") %} / {{ record.get("sub_category") }}{% endif %}
+    {% if view.waived %}<span class="badge waived">waived</span>{% endif %}
+    <span class="badge kind">{{ view.kind }}</span>
+  </h3>
+  {% include "partials/_finding_detail.html" %}
+</div>

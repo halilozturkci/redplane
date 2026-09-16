@@ -1,3 +1,4 @@
+{% macro finding_href(finding_id) %}{% if mode == "static" %}#finding={{ finding_id | urlencode }}{% else %}/ui/runs/{{ run_id }}/findings?finding_id={{ finding_id | urlencode }}{% endif %}{% endmacro %}
 <div id="gate-verdict" class="gate-verdict-wrap" data-threshold="{{ result.threshold }}">
   <p class="gate-verdict {{ 'ok' if result.ok else 'fail' }}">{{ result.message }}</p>
   <div class="gate-lists">
@@ -8,7 +9,7 @@
       {% for row in result.blocking %}
         <li>
           <span class="badge sev-{{ row.severity | lower }}">{{ row.severity }}</span>
-          <a href="#finding={{ row.finding_id | urlencode }}" class="mono">{{ row.finding_id }}</a>
+          <a href="{{ finding_href(row.finding_id) }}" class="mono">{{ row.finding_id }}</a>
           <div class="note">{{ row.target_id }} · {{ row.engine }} · {{ row.category }}{% if row.sub_category %} / {{ row.sub_category }}{% endif %}</div>
           <div>{{ row.description }}</div>
         </li>
@@ -25,7 +26,7 @@
       {% for row in result.waived %}
         <li>
           <span class="badge sev-{{ row.severity | lower }}">{{ row.severity }}</span>
-          <a href="#finding={{ row.finding_id | urlencode }}" class="mono">{{ row.finding_id }}</a>
+          <a href="{{ finding_href(row.finding_id) }}" class="mono">{{ row.finding_id }}</a>
           <div class="note">{{ row.target_id }} · {{ row.engine }} · {{ row.category }}{% if row.sub_category %} / {{ row.sub_category }}{% endif %}</div>
           <div>waiver <span class="mono">{{ row.waiver_id }}</span> · control <span class="mono">{{ row.control_id }}</span> · owner {{ row.owner }} · expires {{ row.expires_at }}</div>
         </li>

@@ -21,7 +21,7 @@ from .gateway.config import GatewayConfigError
 from .gateway.redaction import redact_payload
 from .ui import load_bundle
 from .ui.render import render_run_page
-from .ui.view_server import LoopbackOnlyError, build_view_server
+from .ui.view_server import LoopbackOnlyError, build_view_server, is_loopback_host
 
 
 def _template_payload() -> dict[str, Any]:
@@ -359,6 +359,15 @@ def cmd_view(args: argparse.Namespace) -> int:
 
 
 def cmd_serve_api(args: argparse.Namespace) -> int:
+    if not is_loopback_host(args.host) and not args.unsafe_allow_non_loopback:
+        print(
+            f"Error: refusing to bind {args.host!r}. The API and /ui have no authentication; they are "
+            "meant for one operator on one machine. Bind a loopback address (default 127.0.0.1) and use "
+            "an SSH tunnel, or pass --unsafe-allow-non-loopback if you accept exposing runs, findings "
+            "and artifacts to that network.",
+            file=sys.stderr,
+        )
+        return 2
     try:
         import uvicorn
     except ImportError:
@@ -490,10 +499,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_view.add_argument("--port", type=int, default=8765, help="Port (0 picks a free port)")
     p_view.set_defaults(func=cmd_view)
 
-    p_api = sub.add_parser("serve-api", help="Run REST API")
-    p_api.add_argument("--host", default="127.0.0.1")
+    p_api = sub.add_parser("serve-api", help="Run REST API and the read-only /ui pages")
+    p_api.add_argument("--host", default="127.0.0.1", help="Loopback by default; see --unsafe-allow-non-loopback")
     p_api.add_argument("--port", type=int, default=8000)
     p_api.add_argument("--reload", action="store_true")
+    p_api.add_argument(
+        "--unsafe-allow-non-loopback",
+        action="store_true",
+        help="Allow binding a non-loopback host. There is no authentication: anyone on that network "
+        "can read every run, finding and artifact and submit runs.",
+    )
     p_api.set_defaults(func=cmd_serve_api)
 
     p_gateway = sub.add_parser(
