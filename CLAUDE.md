@@ -14,6 +14,7 @@ uv sync --extra mcs                  # Copilot Studio GA client (SDK mode)
 uv run urt --help                    # CLI entry point
 uv run urt run --spec templates/run_spec.mcs_real.sample.yaml  # execute a real run spec
 uv run urt run --spec templates/run_spec.smoke.yaml  # launcher presence only
+uv run urt view <run_id>             # loopback-only viewer for one run directory
 uv run urt serve-gateway --config templates/gateway_config.sample.yaml
 ```
 
@@ -52,7 +53,9 @@ RunSpec → Orchestrator.execute()
 - `adapters/engines/_command.py` — `CommandEngineAdapter` base for CLI-wrapped tools (most engines subclass this)
 - `adapters/evaluators/_command.py` — `CommandEvaluatorAdapter` base for CLI-wrapped evaluators
 - `normalization/` — `normalize_findings()` (severity/category mapping) + `build_scorecard()` (aggregation including eval_scores)
-- `report.py` — `render_markdown()`, `render_html()`, `render_csv()`, `evaluate_gate()` (waiver-aware)
+- `report.py` — `render_markdown()`, `render_csv()`, `gate_result()`/`GateResult`, `evaluate_gate()` (waiver-aware); `render_html()` is a thin shim over `ui/`
+- `ui/` — viewer: `bundle.py` (`load_bundle()` → `RunBundle`: read-time redaction for pre-1.1 bundles, evidence paths, waiver matching, transcripts), `render.py` (Jinja2 templates, `render_run_page(mode="static"|"served")`, hash CSP), `view_server.py` (`urt view`), `templates/`, `static/`
+- `artifact_policy.py` — inline-vs-attachment and header rules for serving bundle files (shared by the API and `urt view`)
 - `storage/` — `ArtifactStore` (filesystem, writes to `.urt_state/artifacts/<run_id>/`) + `MetadataStore` (SQLite)
 - `policy/mapping.py` — Maps findings to OWASP LLM / OWASP Agentic / MITRE ATLAS frameworks
 - `policy/waivers.py` — Active waiver matching used by `urt gate`
@@ -70,7 +73,7 @@ An OpenAI-compatible proxy (`stdlib ThreadingHTTPServer`, not FastAPI) that rout
 
 ### CLI Commands
 
-`urt init`, `urt validate`, `urt probe`, `urt run`, `urt report`, `urt gate`, `urt waivers`, `urt runs`, `urt findings`, `urt artifacts`, `urt serve-api`, `urt serve-gateway`
+`urt init`, `urt validate`, `urt probe`, `urt run`, `urt report` (`--in-place` re-renders the bundle's own reports), `urt gate`, `urt waivers`, `urt runs`, `urt findings`, `urt artifacts`, `urt view`, `urt serve-api`, `urt serve-gateway`
 
 ### Runtime contracts (do not re-treat as schema-only)
 

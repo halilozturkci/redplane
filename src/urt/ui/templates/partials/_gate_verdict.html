@@ -1,0 +1,39 @@
+<div id="gate-verdict" class="gate-verdict-wrap" data-threshold="{{ result.threshold }}">
+  <p class="gate-verdict {{ 'ok' if result.ok else 'fail' }}">{{ result.message }}</p>
+  <div class="gate-lists">
+    <div>
+      <h4>Blocking ({{ result.blocking | length }})</h4>
+      {% if result.blocking %}
+      <ul>
+      {% for row in result.blocking %}
+        <li>
+          <span class="badge sev-{{ row.severity | lower }}">{{ row.severity }}</span>
+          <a href="#finding={{ row.finding_id | urlencode }}" class="mono">{{ row.finding_id }}</a>
+          <div class="note">{{ row.target_id }} · {{ row.engine }} · {{ row.category }}{% if row.sub_category %} / {{ row.sub_category }}{% endif %}</div>
+          <div>{{ row.description }}</div>
+        </li>
+      {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">None.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h4>Waived ({{ result.waived | length }})</h4>
+      {% if result.waived %}
+      <ul>
+      {% for row in result.waived %}
+        <li>
+          <span class="badge sev-{{ row.severity | lower }}">{{ row.severity }}</span>
+          <a href="#finding={{ row.finding_id | urlencode }}" class="mono">{{ row.finding_id }}</a>
+          <div class="note">{{ row.target_id }} · {{ row.engine }} · {{ row.category }}{% if row.sub_category %} / {{ row.sub_category }}{% endif %}</div>
+          <div>waiver <span class="mono">{{ row.waiver_id }}</span> · control <span class="mono">{{ row.control_id }}</span> · owner {{ row.owner }} · expires {{ row.expires_at }}</div>
+        </li>
+      {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">None.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>

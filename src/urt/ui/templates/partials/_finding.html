@@ -1,0 +1,19 @@
+{% set record = view.record %}
+<details class="finding sev-{{ view.severity }}" data-finding-id="{{ view.finding_id }}"
+  {% for key, value in view.facet_values().items() %} data-{{ key | replace("_", "-") }}="{{ value }}"{% endfor %}>
+  <summary>
+    <span class="badge sev-{{ view.severity }}">{{ view.severity }}</span>
+    <span class="col target" title="{{ record.get('target_id', '') }}">{{ record.get("target_id", "") }}</span>
+    <span class="col engine">{{ record.get("engine", "") }}</span>
+    <span class="col category" title="{{ record.get('category', '') }}{% if record.get('sub_category') %} / {{ record.get('sub_category') }}{% endif %}">{{ record.get("category", "") }}{% if record.get("sub_category") %} / {{ record.get("sub_category") }}{% endif %}</span>
+    <span class="col desc" title="{{ record.get('description', '') }}">{{ record.get("description", "") | truncate(160) }}</span>
+    <span class="tags">
+      {% if view.waived %}<span class="badge waived" title="waiver {{ view.waiver.waiver_id }}">waived</span>{% endif %}
+      <span class="badge kind">{{ view.kind }}</span>
+      {% if record.get("success") %}<span class="badge fail" title="the attack or check succeeded against the target">success</span>{% endif %}
+    </span>
+  </summary>
+  <div class="finding-body">
+    {% include "partials/_finding_detail.html" %}
+  </div>
+</details>

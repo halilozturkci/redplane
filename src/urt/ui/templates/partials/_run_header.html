@@ -1,0 +1,27 @@
+<h1>Redplane report: {{ name }}</h1>
+<div class="meta">
+  <span><strong>Run:</strong> <span class="mono">{{ run_id }}</span></span>
+  <span><strong>Status:</strong> <span class="badge {{ 'ok' if status == 'completed' else 'fail' }}">{{ status }}</span></span>
+  <span><strong>Profile:</strong> {{ profile }}</span>
+  {% if manifest.get("created_at") %}<span><strong>Created:</strong> {{ manifest.get("created_at") }}</span>{% endif %}
+  <span><strong>Duration:</strong> {{ manifest.get("duration_seconds") | seconds }}</span>
+  <span><strong>Targets:</strong> {{ bundle.targets | join(", ") or "—" }}</span>
+  <span><strong>Engines:</strong> {{ summary.get("engines", []) | join(", ") or "—" }}</span>
+  <span><strong>Bundle format:</strong> {{ version }}</span>
+</div>
+{% if legacy %}
+<div class="banner">
+  Bundle format version {{ version }} predates write-time redaction ({{ redacted_min_version }}).
+  Credentials shown here were masked when this page was rendered, but the JSON files on disk may still hold them; treat the directory as sensitive.
+</div>
+{% endif %}
+{% if status == "failed" %}
+<div class="banner error">
+  <strong>Run failed:</strong> {{ manifest.get("error", "see run_error.log") }}
+  {% if error_log_head %}
+  <details><summary>run_error.log (head)</summary><pre>{{ error_log_head }}</pre></details>
+  {% elif legacy %}
+  <div class="note">run_error.log head not shown for pre-{{ redacted_min_version }} bundles.</div>
+  {% endif %}
+</div>
+{% endif %}

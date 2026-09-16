@@ -1,0 +1,38 @@
+{% if tiles %}
+<div class="tiles">
+{% for tile in tiles %}
+  <div class="tile {{ tile.css }}"><span class="tile-label">{{ tile.label }}</span><span class="tile-value">{{ tile.value }}</span></div>
+{% endfor %}
+{% if budget %}
+  <div class="tile budget">
+    <span class="tile-label">Budget</span>
+    <span class="tile-value">{{ budget.get("elapsed_seconds") | seconds }}</span>
+    <span class="note">of {{ budget.get("max_duration_seconds") }} s · cost_enforcement: {{ budget.get("cost_enforcement", "unset") }}</span>
+  </div>
+{% endif %}
+</div>
+{% if asr_by_category %}
+<h3>ASR by category</h3>
+<table class="asr">
+  <thead><tr><th>Category</th><th>ASR</th><th></th></tr></thead>
+  <tbody>
+  {% for category, rate in asr_by_category %}
+    <tr><td>{{ category }}</td><td class="num">{{ rate | pct }}</td><td><progress value="{{ rate }}" max="1"></progress></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if by_engine %}
+<h3>Findings by engine</h3>
+<table class="by-engine">
+  <thead><tr><th>Engine</th><th class="num">Findings</th></tr></thead>
+  <tbody>
+  {% for engine, count in by_engine %}
+    <tr><td>{{ engine }}</td><td class="num">{{ count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% else %}
+<p class="muted">No scorecard was produced for this run (it did not complete), so no counts or rates are shown.</p>
+{% endif %}

@@ -1,0 +1,13 @@
+{% if eval_rows %}
+<div class="meta"><span><strong>Overall pass rate:</strong> {{ eval_pass_rate | pct }}</span></div>
+<table class="eval">
+  <thead><tr><th>Metric</th><th>Avg score</th></tr></thead>
+  <tbody>
+  {% for metric, avg in eval_rows %}
+    <tr><td>{{ metric }}</td><td>{{ avg | num(4) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No evaluator scores in this run.</p>
+{% endif %}

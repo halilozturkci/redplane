@@ -1,0 +1,18 @@
+{% if files %}
+<p class="note">sha256 from <code>artifacts_index.json</code>. {{ self_referential_files | join(" and ") }} are not listed: this page cannot know its own final hash, and the index is written after it.</p>
+<table class="files">
+  <thead><tr><th>File</th><th class="num">Bytes</th><th>sha256</th></tr></thead>
+  <tbody>
+  {% for row in files %}
+    {% set href = href_for(row.path) %}
+    <tr>
+      <td>{% if href %}<a href="{{ href }}" class="mono">{{ row.path }}</a>{% else %}<span class="mono">{{ row.path }}</span> <span class="note">(not served for pre-{{ redacted_min_version }} bundles)</span>{% endif %}</td>
+      <td class="num">{{ row.size_bytes }}</td>
+      <td class="mono">{{ row.sha256 }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No artifacts_index.json yet; the file list is written when the run completes.</p>
+{% endif %}

@@ -101,86 +101,29 @@ def _esc(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
-def render_html(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -> str:
-    sorted_findings = sort_findings(findings)
-    rows: list[str] = []
-    for item in sorted_findings:
-        rows.append(
-            "<tr>"
-            f"<td>{_esc(item.get('severity', ''))}</td>"
-            f"<td>{_esc(item.get('target_id', ''))}</td>"
-            f"<td>{_esc(item.get('engine', ''))}</td>"
-            f"<td>{_esc(item.get('category', ''))}</td>"
-            f"<td>{_esc(item.get('description', ''))}</td>"
-            "</tr>"
-        )
+def render_html(
+    scorecard: dict[str, Any],
+    findings: list[dict[str, Any]],
+    *,
+    waivers: list[dict[str, Any]] | None = None,
+) -> str:
+    """Self-contained HTML viewer for one run from in-memory payloads.
 
-    run_id = _esc(scorecard.get("run_id", "unknown"))
-    total_findings = _esc(scorecard.get("total_findings", 0))
-    asr_overall = f"{float(scorecard.get('asr_overall', 0.0)):.2%}"
-    severity_counts = "/".join(
-        _esc(scorecard.get(level, 0)) for level in ("critical", "high", "medium", "low", "info")
+    Callers with a run directory should prefer `Orchestrator.write_reports` /
+    `urt.ui.load_bundle`, which also embed the manifest, invocations, evidence
+    links and the bundle file list. Every interpolated value is autoescaped.
+    """
+    from .ui import build_bundle
+    from .ui.render import render_run_page
+
+    bundle = build_bundle(
+        str(scorecard.get("run_id", "unknown")),
+        scorecard=scorecard,
+        findings=findings,
+        manifest={"run_id": scorecard.get("run_id", "unknown"), "status": "completed"},
+        waivers=waivers,
     )
-
-    # Build eval results HTML section
-    eval_scores = scorecard.get("eval_scores", {})
-    eval_pass_rate = scorecard.get("eval_pass_rate", 0.0)
-    eval_html = ""
-    if eval_scores:
-        eval_rows = "".join(
-            f"<tr><td>{_esc(metric)}</td><td>{float(avg):.4f}</td></tr>"
-            for metric, avg in sorted(eval_scores.items())
-        )
-        eval_html = f"""
-  <h2>Evaluation Results</h2>
-  <div class="meta"><strong>Overall Pass Rate:</strong> {float(eval_pass_rate):.2%}</div>
-  <table>
-    <thead><tr><th>Metric</th><th>Avg Score</th></tr></thead>
-    <tbody>{eval_rows}</tbody>
-  </table>"""
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
-  <title>URT Report {run_id}</title>
-  <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; }}
-    h1, h2 {{ margin: 0 0 12px 0; }}
-    .meta {{ margin-bottom: 20px; }}
-    table {{ border-collapse: collapse; width: 100%; font-size: 14px; margin-bottom: 20px; }}
-    th, td {{ border: 1px solid #d5d5d5; padding: 8px; text-align: left; vertical-align: top; }}
-    th {{ background: #f2f2f2; }}
-  </style>
-</head>
-<body>
-  <h1>URT Report</h1>
-  <div class="meta">
-    <div><strong>Run ID:</strong> {run_id}</div>
-    <div><strong>Total Findings:</strong> {total_findings}</div>
-    <div><strong>ASR Overall:</strong> {asr_overall}</div>
-    <div><strong>Critical/High/Medium/Low/Info:</strong> {severity_counts}</div>
-  </div>
-  <h2>Findings</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Severity</th>
-        <th>Target</th>
-        <th>Engine</th>
-        <th>Category</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      {''.join(rows)}
-    </tbody>
-  </table>
-  {eval_html}
-</body>
-</html>
-"""
+    return render_run_page(bundle, mode="static")
 
 
 def render_csv(findings: list[dict[str, Any]]) -> str:

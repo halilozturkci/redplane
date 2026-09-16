@@ -1,0 +1,18 @@
+{% if evaluator_summaries %}
+<h3>Evaluators</h3>
+<table class="evaluators">
+  <thead><tr><th>Evaluator</th><th>Target</th><th>Status</th><th class="num">Scores</th><th>fail_open</th><th>Message</th></tr></thead>
+  <tbody>
+  {% for row in evaluator_summaries %}
+    <tr>
+      <td>{{ row.get("evaluator", "") }}</td>
+      <td>{{ row.get("target_id", "") }}</td>
+      <td><span class="badge {{ 'ok' if row.get('status') == 'completed' else ('skipped' if row.get('status') == 'skipped' else 'fail') }}">{{ row.get("status", "") }}</span></td>
+      <td class="num">{{ row.get("score_count", 0) }}</td>
+      <td>{{ "yes" if row.get("fail_open") else "no" }}</td>
+      <td>{{ row.get("message", "") }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}

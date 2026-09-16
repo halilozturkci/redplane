@@ -1,0 +1,37 @@
+<div class="gate" id="gate-panel">
+  <div class="gate-controls">
+    {% if mode == "static" %}
+    <label>Threshold
+      <select id="gate-threshold">
+      {% for level in severity_levels %}
+        <option value="{{ level }}"{% if level == default_threshold %} selected{% endif %}>{{ level }}{% if level == default_threshold %} (profile default){% endif %}</option>
+      {% endfor %}
+      </select>
+    </label>
+    <span class="note">Waivers as stored when this page was rendered ({{ waivers | length }} active). Re-run <code>urt report</code> to refresh.</span>
+    {% else %}
+    <form hx-get="/ui/runs/{{ run_id }}/gate" hx-target="#gate-verdict" hx-swap="outerHTML" hx-trigger="change" method="get" action="/ui/runs/{{ run_id }}">
+      <label>Threshold
+        <select name="threshold" id="gate-threshold">
+        {% for level in severity_levels %}
+          <option value="{{ level }}"{% if level == gate_threshold %} selected{% endif %}>{{ level }}{% if level == default_threshold %} (profile default){% endif %}</option>
+        {% endfor %}
+        </select>
+      </label>
+      <label><input type="checkbox" name="ignore_waivers" value="true"{% if ignore_waivers %} checked{% endif %}> ignore waivers</label>
+      <noscript><button type="submit">Apply</button></noscript>
+    </form>
+    {% endif %}
+  </div>
+  {% if mode == "static" %}
+    {% for level in severity_levels %}
+    {% set result = gates[level] %}
+    <div class="gate-panel" data-threshold="{{ level }}"{% if level != default_threshold %} hidden{% endif %}>
+      {% include "partials/_gate_verdict.html" %}
+    </div>
+    {% endfor %}
+  {% else %}
+    {% set result = gate %}
+    {% include "partials/_gate_verdict.html" %}
+  {% endif %}
+</div>

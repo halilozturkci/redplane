@@ -1,3 +1,5 @@
+import re
+
 from urt.report import render_csv, render_html, render_markdown
 
 
@@ -78,15 +80,19 @@ def test_render_html_escapes_attacker_controlled_text():
 
     html = render_html(scorecard, findings)
 
-    assert "<script>" not in html
+    assert payload not in html
     assert "<img" not in html
-    assert "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;" in html
-    assert "<td>&lt;target&gt;</td>" in html
-    assert "<td>&lt;engine&gt;</td>" in html
-    assert "<td>&lt;category&gt;</td>" in html
+    assert "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "<target>" not in html and "&lt;target&gt;" in html
+    assert "<engine>" not in html and "&lt;engine&gt;" in html
+    assert "<category>" not in html and "&lt;category&gt;" in html
     assert "<td>&lt;metric&gt;</td>" in html
     assert "run-&lt;b&gt;id&lt;/b&gt;" in html
     assert "<b>id</b>" not in html
-    # Defense in depth for a file that gets emailed: no scripts can run even if a
-    # future interpolation site forgets to escape.
-    assert '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'" />' in html
+    # Defense in depth for a file that gets emailed: only the viewer's own inline
+    # script and stylesheet (pinned by sha256) may run, nothing injected can.
+    csp = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', html).group(1)
+    assert csp.startswith("default-src 'none'; script-src 'sha256-")
+    assert "'unsafe-inline'" not in csp
+    # The only executable script is the viewer; attacker text never reaches a script context.
+    assert len(re.findall(r"<script>", html)) == 1

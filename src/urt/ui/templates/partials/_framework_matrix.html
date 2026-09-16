@@ -1,0 +1,26 @@
+<p class="note">Mappings are category-level heuristics (<code>policy/mapping.py</code>), not per-test verdicts. An empty cell means no finding mapped there, not that the control is covered or safe. Only attack findings count; execution and coverage-gap findings are excluded.</p>
+{% for matrix in matrices %}
+<h3>{{ matrix.title }}</h3>
+{% if matrix.rows %}
+<table class="matrix">
+  <thead><tr><th>Control</th>{% for target in matrix.targets %}<th>{{ target }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in matrix.rows %}
+    <tr class="{{ 'unmapped' if row.unmapped else '' }}">
+      <td>{{ row.label }}</td>
+      {% for target in matrix.targets %}
+      {% set cell = row.cells.get(target) %}
+      {% if cell and cell.count %}
+      <td class="cell sev-{{ cell.max_severity }}" title="{{ cell.categories | sort | join(', ') }}">{{ cell.count }} <span class="badge sev-{{ cell.max_severity }}">{{ cell.max_severity }}</span></td>
+      {% else %}
+      <td class="cell muted">—</td>
+      {% endif %}
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No attack findings map to this framework.</p>
+{% endif %}
+{% endfor %}

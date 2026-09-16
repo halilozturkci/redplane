@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+{% if mode == "static" %}
+<meta http-equiv="Content-Security-Policy" content="{{ csp }}">
+{% endif %}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Redplane{% endblock %}</title>
+{% if mode == "static" %}
+<style>{{ css_text }}</style>
+{% else %}
+<link rel="stylesheet" href="/ui/static/app.css">
+<meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0}'>
+{% endif %}
+</head>
+<body class="mode-{{ mode }}">
+{% block nav %}{% endblock %}
+<main>
+{% block content %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

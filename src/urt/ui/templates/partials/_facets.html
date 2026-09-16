@@ -1,0 +1,46 @@
+{% set facet_labels = [("severity", "Severity"), ("engine", "Engine"), ("category", "Category"), ("sub_category", "Sub-category"), ("target", "Target"), ("success", "Success"), ("waived", "Waived"), ("kind", "Kind")] %}
+{% if mode == "static" %}
+<div class="facets" id="facets">
+  {% for key, label in facet_labels %}
+  <label>{{ label }}
+    <select id="facet-{{ key }}">
+      <option value="">all</option>
+      {% for value, count in facets.get(key, []) %}
+      <option value="{{ value }}">{{ value or "(none)" }} ({{ count }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <label>Search
+    <input type="search" id="facet-q" placeholder="id, text, prompt…">
+  </label>
+  <div class="actions">
+    <button type="button" id="facet-reset">Reset</button>
+    <button type="button" id="findings-expand">Expand all</button>
+    <button type="button" id="findings-collapse">Collapse all</button>
+  </div>
+  <span class="count" id="finding-count">{{ findings | length }} of {{ findings | length }} findings</span>
+</div>
+{% else %}
+<form class="facets" id="facets" method="get" action="/ui/runs/{{ run_id }}/findings"
+      hx-get="/ui/runs/{{ run_id }}/findings/table" hx-target="#findings-table" hx-swap="outerHTML"
+      hx-trigger="change, keyup changed delay:300ms from:#facet-q" hx-push-url="false">
+  {% for key, label in facet_labels %}
+  <label>{{ label }}
+    <select name="{{ key }}" id="facet-{{ key }}">
+      <option value="">all</option>
+      {% for value, count in facets.get(key, []) %}
+      <option value="{{ value }}"{% if filters.get(key) == value %} selected{% endif %}>{{ value or "(none)" }} ({{ count }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <label>Search
+    <input type="search" name="q" id="facet-q" value="{{ filters.get('q', '') }}" placeholder="id, text, prompt…">
+  </label>
+  <div class="actions">
+    <a href="/ui/runs/{{ run_id }}/findings"><button type="button">Reset</button></a>
+    <noscript><button type="submit">Apply</button></noscript>
+  </div>
+</form>
+{% endif %}

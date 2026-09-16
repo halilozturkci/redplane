@@ -15,10 +15,14 @@ from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
-from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
+from .storage.artifact_store import ArtifactPathError, ArtifactStore
+from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
 from .gateway.redaction import redact_payload
+from .ui import load_bundle
+from .ui.render import render_run_page
+from .ui.view_server import LoopbackOnlyError, build_view_server
 
 
 def _template_payload() -> dict[str, Any]:
@@ -168,16 +172,29 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(f"Run not found: {args.run_id}", file=sys.stderr)
         return 1
 
+    run_dir = orchestrator.artifact_store.existing_run_dir(args.run_id)
+    if run_dir is None:
+        print(f"Run directory not found for {args.run_id}", file=sys.stderr)
+        return 1
+
+    if args.in_place:
+        # Works for failed runs too: the viewer renders the manifest error and
+        # run_error.log head when there is no scorecard.
+        orchestrator.write_reports(args.run_id)
+        print(f"Report bundle refreshed in {run_dir}")
+        return 0
+
     scorecard_path = run.get("scorecard_path")
     findings_path = run.get("findings_path")
     if not scorecard_path or not findings_path:
-        print("Run does not contain scorecard/findings paths yet", file=sys.stderr)
+        print("Run does not contain scorecard/findings paths yet; use --in-place for failed runs", file=sys.stderr)
         return 1
 
     scorecard = json.loads(Path(scorecard_path).read_text(encoding="utf-8"))
     findings = json.loads(Path(findings_path).read_text(encoding="utf-8"))
     markdown = render_markdown(scorecard, findings)
-    html = render_html(scorecard, findings)
+    # The viewer embeds the redacted bundle and the waivers stored right now.
+    html = render_run_page(load_bundle(run_dir, waivers=orchestrator.list_waivers()), mode="static")
     csv_text = render_csv(findings)
 
     if args.output_dir:
@@ -190,6 +207,11 @@ def cmd_report(args: argparse.Namespace) -> int:
         html_path.write_text(html, encoding="utf-8")
         csv_path.write_text(csv_text, encoding="utf-8")
         print(f"Report bundle written to {output_dir}")
+        if output_dir.resolve() != run_dir.resolve():
+            print(
+                "Note: evidence and file links in report.html are relative to the run directory "
+                f"({run_dir}); copy the report there, use --in-place, or open it with `urt view`."
+            )
         return 0
 
     if args.format == "md":
@@ -313,6 +335,37 @@ def cmd_waivers_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve_view(server) -> None:
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    # Same run-id rules the server applies to every request (no separators, no "..").
+    try:
+        run_dir = ArtifactStore(args.artifact_root).existing_run_dir(args.run_id)
+    except ArtifactPathError:
+        run_dir = None
+    if run_dir is None:
+        print(f"Run directory not found: {Path(args.artifact_root) / args.run_id}", file=sys.stderr)
+        return 1
+    try:
+        server = build_view_server(run_dir, host=args.host, port=args.port)
+    except LoopbackOnlyError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    host, port = server.server_address[0], server.server_address[1]
+    shown_host = f"[{host}]" if ":" in str(host) else host
+    print(f"Serving {args.run_id} from {run_dir}")
+    print(f"Open http://{shown_host}:{port}/  (Ctrl+C to stop)")
+    _serve_view(server)
+    return 0
+
+
 def cmd_serve_api(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -385,6 +438,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--output", help="Output report file")
     p_report.add_argument("--format", default="md", choices=["md", "html", "csv"])
     p_report.add_argument("--output-dir", help="Write report bundle (md/html/csv) into directory")
+    p_report.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Re-render report.md/html/csv inside the run directory and rebuild artifacts_index.json "
+        "(refreshes the waiver state embedded in report.html)",
+    )
     p_report.set_defaults(func=cmd_report)
 
     p_gate = sub.add_parser("gate", help="Evaluate run against severity threshold")
@@ -430,6 +489,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_waivers_create.add_argument("--expires-at", required=True, help="ISO-8601 expiry timestamp")
     p_waivers_create.add_argument("--waiver-id", help="Optional stable waiver id")
     p_waivers_create.set_defaults(func=cmd_waivers_create)
+
+    p_view = sub.add_parser(
+        "view", help="Serve one run directory (report.html viewer + bundle files) on loopback"
+    )
+    p_view.add_argument("run_id", help="Run ID (directory name under --artifact-root)")
+    p_view.add_argument("--host", default="127.0.0.1", help="Loopback address only (default 127.0.0.1)")
+    p_view.add_argument("--port", type=int, default=8765, help="Port (0 picks a free port)")
+    p_view.set_defaults(func=cmd_view)
 
     p_api = sub.add_parser("serve-api", help="Run REST API")
     p_api.add_argument("--host", default="127.0.0.1")
