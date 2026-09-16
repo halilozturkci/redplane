@@ -10,11 +10,12 @@
   on {{ finding.record.get("target_id", "") }}). Pick how broadly the waiver should match.</p>
 {% endif %}
 {% if error %}<div class="banner error">{{ error }}</div>{% endif %}
-<form method="post" action="/ui/waivers" class="waiver-form"
-      hx-get="/ui/runs/{{ run_id | urlencode }}/waiver-preview" hx-target="#waiver-preview" hx-swap="outerHTML"
-      hx-trigger="change" hx-push-url="false">
+<form method="post" action="/ui/waivers" class="waiver-form">
   <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
   {% if run_id %}<input type="hidden" name="run_id" value="{{ run_id }}">{% endif %}
+  {# The preview trigger sits on a div, not the form: htmx validates forms before
+     requesting, and reason/owner are still empty while the operator picks a control. #}
+  <div class="preview-source"{% if run_id %} hx-get="/ui/runs/{{ run_id | urlencode }}/waiver-preview" hx-target="#waiver-preview" hx-swap="outerHTML" hx-trigger="change" hx-include="closest form" hx-push-url="false"{% endif %}>
   <label>Target id
     <input type="text" name="target_id" value="{{ values.target_id }}" required placeholder="target id or * for any">
   </label>
@@ -28,6 +29,7 @@
       <input type="text" name="control_id" value="{{ values.control_id }}" required placeholder="category, sub_category, finding id or framework label">
     {% endif %}
   </fieldset>
+  </div>
   <label>Reason
     <input type="text" name="reason" required value="{{ values.reason }}" placeholder="ticket, compensating control, accepted risk…">
   </label>
