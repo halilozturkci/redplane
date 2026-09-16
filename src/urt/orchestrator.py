@@ -24,8 +24,11 @@ from .constants import (
     REDACTED_BUNDLE_MIN_VERSION,
     RUN_PROFILE_DEFAULTS,
     SEVERITY_ORDER,
+    STAGE_EVENTS_FILE,
+    TERMINAL_RUN_STATUSES,
 )
 from .diff import RunDiff, TrendPoint, diff_runs
+from .jobs import current_worker_id, worker_is_alive
 from .normalization import build_scorecard, normalize_findings
 from .policy.waivers import parse_expiry, preview_matches, waiver_is_active
 from .redaction import REDACTED, Scrubber, redact_bundle_payload, redact_run_spec_payload
@@ -54,6 +57,30 @@ def _parse_version(value: str | None) -> tuple[int, ...]:
         return (0,)
 
 
+# A non-terminal row whose worker cannot be checked (no `worker_id`, another host) is
+# treated as interrupted only after this long without an update.
+STALE_RUN_AFTER_SECONDS = 24 * 60 * 60
+INTERRUPTED_MESSAGE = (
+    "interrupted: the process executing this run exited before it finished "
+    "(status was {status}); the bundle on disk is partial and the run was not re-executed"
+)
+
+
+class StageLog:
+    """Append-only orchestrator stage events, rewritten to `stage_events.json` on every
+    append so a poller sees the current stage while the run is still executing."""
+
+    def __init__(self, store: ArtifactStore, run_id: str) -> None:
+        self._store = store
+        self._run_id = run_id
+        self.events: list[dict[str, Any]] = []
+
+    def record(self, stage: str, status: str, **fields: Any) -> None:
+        event = {"at": datetime.now(timezone.utc).isoformat(), "stage": stage, "status": status, **fields}
+        self.events.append(event)
+        self._store.write_json(self._run_id, STAGE_EVENTS_FILE, self.events)
+
+
 class Orchestrator:
     """Coordinates run execution across targets and engines."""
 
@@ -78,18 +105,53 @@ class Orchestrator:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         return f"run-{slug}-{ts}-{uuid.uuid4().hex[:8]}"
 
-    def execute(self, spec: RunSpec) -> dict[str, Any]:
+    def enqueue_run(self, spec: RunSpec, *, worker_id: str) -> str:
+        """Record a run as `queued` for `worker_id` and return its id. `execute(spec,
+        run_id=...)` later moves the same row to `running`; nothing is written to disk
+        until then (the spec, credentials included, lives only in the worker's memory)."""
         run_id = self._new_run_id(spec)
-        now = self._utc_now()
-        run_record = RunRecord(
-            run_id=run_id,
-            name=spec.name,
-            profile=spec.run_profile,
-            status="running",
-            created_at=now,
-            updated_at=now,
+        self.metadata_store.create_run(
+            self.metadata_store.new_record(
+                run_id=run_id, name=spec.name, profile=spec.run_profile, status="queued", worker_id=worker_id
+            )
         )
-        self.metadata_store.create_run(run_record)
+        return run_id
+
+    def _start_run_record(self, spec: RunSpec, run_id: str | None, worker_id: str) -> tuple[str, str]:
+        """Create the `running` row (CLI / sync path) or promote the `queued` one (worker).
+        Returns `(run_id, created_at)`. A row that is not `queued` is never executed twice."""
+        started = self._utc_now()
+        if run_id is None:
+            run_id = self._new_run_id(spec)
+            self.metadata_store.create_run(
+                RunRecord(
+                    run_id=run_id,
+                    name=spec.name,
+                    profile=spec.run_profile,
+                    status="running",
+                    created_at=started,
+                    updated_at=started,
+                    worker_id=worker_id,
+                    started_at=started,
+                )
+            )
+            return run_id, started
+        row = self.metadata_store.get_run(run_id)
+        if row is None:
+            raise ValueError(f"Run {run_id!r} was never queued")
+        if row["status"] != "queued":
+            raise RuntimeError(f"Run {run_id!r} is {row['status']}, not queued; refusing to execute it again")
+        self.metadata_store.update_run(run_id, status="running", updated_at=started, worker_id=worker_id, started_at=started)
+        return run_id, str(row["created_at"])
+
+    def execute(self, spec: RunSpec, *, run_id: str | None = None, worker_id: str | None = None) -> dict[str, Any]:
+        """Execute `spec` to completion in this thread and write the audit bundle.
+
+        Without `run_id` (the `urt run` / `?wait=true` path) a new `running` row is
+        created; with one (the background worker) the previously `queued` row is
+        promoted. Both paths are this one function.
+        """
+        run_id, now = self._start_run_record(spec, run_id, worker_id or current_worker_id())
         # The in-memory spec holds expanded `${VAR}` credentials; nothing this run
         # writes or returns may. `store` scrubs known secret values from every write
         # (including adapter raw logs); the spec copy is additionally key-redacted.
@@ -97,6 +159,14 @@ class Orchestrator:
         store = self.artifact_store.scrubbed(scrubber)
         redacted_spec = scrubber.scrub(redact_run_spec_payload(spec.to_dict()))
         store.write_json(run_id, "resolved_spec.json", redacted_spec)
+        stages = StageLog(store, run_id)
+        stages.record(
+            "run",
+            "started",
+            targets=[t.target_id for t in spec.targets],
+            engines=[e.name for e in spec.engines],
+            evaluators=[e.name for e in spec.evaluators],
+        )
 
         run_started = perf_counter()
         all_findings: list[UnifiedFinding] = []
@@ -124,6 +194,7 @@ class Orchestrator:
                         "checked_at": self._utc_now(),
                     }
                 )
+                stages.record("target", "ok" if ok else "failed", target_id=target_spec.target_id, message=str(detail))
                 if not ok:
                     all_findings.append(
                         UnifiedFinding(
@@ -167,9 +238,19 @@ class Orchestrator:
 
                         invocation_started = perf_counter()
                         invocation_started_at = self._utc_now()
+                        stages.record("engine", "started", engine=engine_spec.name, target_id=target_spec.target_id)
                         result = self._safe_run_engine(engine_adapter, context)
                         invocation_duration = perf_counter() - invocation_started
                         invocation_ended_at = self._utc_now()
+                        stages.record(
+                            "engine",
+                            result.status,
+                            engine=engine_spec.name,
+                            target_id=target_spec.target_id,
+                            message=result.message,
+                            duration_seconds=round(invocation_duration, 4),
+                            finding_count=len(result.findings),
+                        )
                         budget.observe_metrics(result.metrics)
                         budget.check(stage=f"after engine {engine_spec.name} on {target_spec.target_id}")
 
@@ -198,6 +279,8 @@ class Orchestrator:
                                 "fail_open": engine_spec.fail_open,
                             }
                         )
+                        # Rewritten after every invocation so progress is observable on disk.
+                        store.write_json(run_id, "engine_invocations.json", engine_invocations)
 
                         if result.status in {"failed"} and not engine_spec.fail_open:
                             raise RuntimeError(
@@ -234,7 +317,16 @@ class Orchestrator:
                             run_profile=spec.run_profile,
                             engine_findings_path=sidecar_path,
                         )
+                        stages.record("evaluator", "started", evaluator=evaluator_spec.name, target_id=target_spec.target_id)
                         eval_result = self._safe_run_evaluator(evaluator_adapter, eval_context)
+                        stages.record(
+                            "evaluator",
+                            eval_result.status,
+                            evaluator=evaluator_spec.name,
+                            target_id=target_spec.target_id,
+                            message=eval_result.message,
+                            score_count=len(eval_result.scores),
+                        )
                         budget.observe_metrics(eval_result.metrics)
                         budget.check(
                             stage=f"after evaluator {evaluator_spec.name} on {target_spec.target_id}"
@@ -257,6 +349,7 @@ class Orchestrator:
                 finally:
                     target_adapter.end_session(session_id)
 
+            stages.record("normalize", "started", finding_count=len(all_findings))
             normalized = normalize_findings(all_findings, policy_profiles=spec.policy_profiles)
             normalized = [scrubber.scrub_finding(item) for item in normalized]
             scorecard = build_scorecard(run_id, normalized, eval_results=all_eval_results or None)
@@ -315,6 +408,8 @@ class Orchestrator:
                 },
             }
             store.write_json(run_id, "run_manifest.json", run_manifest)
+            # Recorded before the reports so the index they build covers the final log.
+            stages.record("run", "completed", finding_count=len(normalized), duration_seconds=round(run_duration, 4))
 
             self.write_reports(run_id, store=store)
             artifacts_index_path = str(run_root / "artifacts_index.json")
@@ -344,6 +439,7 @@ class Orchestrator:
             error_trace = traceback.format_exc()
             error_path = store.write_text(run_id, "run_error.log", error_trace)
             error_message = scrubber.scrub_text(str(exc))
+            stages.record("run", "failed", message=error_message)
             self.metadata_store.update_run(
                 run_id,
                 status="failed",
@@ -374,6 +470,88 @@ class Orchestrator:
                 "error": error_message,
                 "error_log_path": error_path,
             }
+
+    # --- run lifecycle bookkeeping (async submissions, crash recovery) ---
+
+    def mark_run_failed(self, run_id: str, message: str) -> None:
+        """Record a failure for a run whose `execute` never got to write one (worker
+        error, interrupted process). Writes a failed manifest unless one exists."""
+        row = self.metadata_store.get_run(run_id)
+        if row is None:
+            return
+        now = self._utc_now()
+        self.metadata_store.update_run(run_id, status="failed", updated_at=now, error_message=message)
+        if self.artifact_store.read_json(run_id, "run_manifest.json") is None:
+            self.artifact_store.write_json(
+                run_id,
+                "run_manifest.json",
+                {
+                    "run_id": run_id,
+                    "name": row.get("name"),
+                    "run_profile": row.get("profile"),
+                    "status": "failed",
+                    "created_at": row.get("created_at"),
+                    "failed_at": now,
+                    "bundle_format_version": BUNDLE_FORMAT_VERSION,
+                    "error": message,
+                    "engine_invocations": self.artifact_store.read_json(run_id, "engine_invocations.json") or [],
+                },
+            )
+        self.artifact_store.write_text(run_id, "run_error.log", f"{message}\n")
+        events = self.artifact_store.read_json(run_id, STAGE_EVENTS_FILE) or []
+        events.append({"at": now, "stage": "run", "status": "failed", "message": message})
+        self.artifact_store.write_json(run_id, STAGE_EVENTS_FILE, events)
+
+    @staticmethod
+    def _age_seconds(timestamp: str | None) -> float | None:
+        if not timestamp:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(timestamp))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - parsed).total_seconds()
+
+    def run_is_stale(self, row: dict[str, Any]) -> bool:
+        """A `queued`/`running` row whose worker process is gone (same host, dead pid), or
+        whose worker cannot be checked and that has not been updated for a day."""
+        if row.get("status") in TERMINAL_RUN_STATUSES:
+            return False
+        alive = worker_is_alive(row.get("worker_id"))
+        if alive is not None:
+            return not alive
+        age = self._age_seconds(row.get("updated_at"))
+        return age is not None and age > STALE_RUN_AFTER_SECONDS
+
+    def recover_interrupted_runs(self) -> list[str]:
+        """Mark stale `queued`/`running` rows `failed` (see `run_is_stale`). Called when a
+        control-plane process starts. Never re-executes anything. Returns the run ids."""
+        recovered: list[str] = []
+        for row in self.metadata_store.list_unfinished_runs():
+            if not self.run_is_stale(row):
+                continue
+            self.mark_run_failed(row["run_id"], INTERRUPTED_MESSAGE.format(status=row["status"]))
+            recovered.append(row["run_id"])
+        return recovered
+
+    def _decorate_run_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Lifecycle fields every run row carries: `terminal`, `stale`, `stage_event_count`."""
+        events = self.artifact_store.read_json(row["run_id"], STAGE_EVENTS_FILE)
+        return {
+            **row,
+            "terminal": row.get("status") in TERMINAL_RUN_STATUSES,
+            "stale": self.run_is_stale(row),
+            "stage_event_count": len(events) if isinstance(events, list) else 0,
+        }
+
+    def stage_events(self, run_id: str) -> list[dict[str, Any]] | None:
+        """Orchestrator stage events so far; None for an unknown run, [] before it starts."""
+        if not self.metadata_store.get_run(run_id):
+            return None
+        events = self.artifact_store.read_json(run_id, STAGE_EVENTS_FILE)
+        return list(events) if isinstance(events, list) else []
 
     def _write_failure_reports(self, run_id: str, store: ArtifactStore) -> None:
         # Best effort: the failure is already recorded in SQLite and the manifest, and
@@ -502,7 +680,7 @@ class Orchestrator:
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         row = self.metadata_store.get_run(run_id)
-        return None if row is None else self._mask_legacy_error(row)
+        return None if row is None else self._decorate_run_row(self._mask_legacy_error(row))
 
     def _mask_legacy_error(self, row: dict[str, Any]) -> dict[str, Any]:
         # SQLite `error_message` is free text; pre-1.1 runs wrote it unscrubbed
@@ -543,7 +721,7 @@ class Orchestrator:
         executed = sorted({s["engine"] for s in engine_summaries if s.get("status") != "skipped"})
         skipped = sorted({s["engine"] for s in engine_summaries if s.get("status") == "skipped"} - set(executed))
 
-        enriched = self._mask_legacy_error(dict(row))
+        enriched = self._decorate_run_row(self._mask_legacy_error(dict(row)))
         enriched.update(
             {
                 "targets": summary.get("targets") or [t.get("target_id") for t in resolved_spec.get("targets", [])],

@@ -110,10 +110,21 @@ WAIVER_DEFAULT_EXPIRY_DAYS = 30
 # Larger payloads are truncated with a link to the raw artifact.
 REPORT_METADATA_JSON_CAP = 4096
 
+# Run lifecycle in SQLite `runs.status`. `queued` and `running` are the non-terminal
+# states an async submission passes through; `urt run` goes straight to `running`.
+RUN_STATUSES = ("queued", "running", "completed", "failed")
+TERMINAL_RUN_STATUSES = frozenset({"completed", "failed"})
+
+# Orchestrator stage events (`stage_events.json`), appended as the run progresses so a
+# poller can see which engine/evaluator is executing. These are discrete stages, not a
+# progress fraction: the orchestrator has no total unit of work.
+STAGE_EVENTS_FILE = "stage_events.json"
+
 AUDIT_BUNDLE_FILES = (
     "resolved_spec.json",
     "run_manifest.json",
     "engine_invocations.json",
+    STAGE_EVENTS_FILE,
     "artifacts_index.json",
     "findings.json",
     "scorecard.json",

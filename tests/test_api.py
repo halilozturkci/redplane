@@ -1,7 +1,9 @@
 """FastAPI control-plane contract tests (G12, #17).
 
-`POST /v1/runs` is synchronous: validation errors are 400 before anything is
-persisted, execution failures are 500 after the run was recorded as failed.
+`POST /v1/runs?wait=true` keeps the synchronous contract these tests pin: validation
+errors are 400 before anything is persisted, execution failures are 500 after the
+run was recorded as failed. The default (async, 202) path is covered in
+`tests/test_async_runs.py`.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from urt.api import create_app
 from urt.orchestrator import Orchestrator
 
 PYTHON = sys.executable
+SYNC = {"wait": "true"}
 
 
 def _spec(*, engine_command: str, fail_open: bool = True, name: str = "api-smoke") -> dict:
@@ -69,12 +72,13 @@ def test_healthz(client: TestClient):
 
 
 def test_create_run_rejects_invalid_spec_with_400_and_persists_nothing(client: TestClient):
-    response = client.post("/v1/runs", json={"name": "no-targets", "engines": [{"name": "garak"}]})
+    response = client.post("/v1/runs", params=SYNC, json={"name": "no-targets", "engines": [{"name": "garak"}]})
     assert response.status_code == 400
     assert "target" in response.json()["detail"].lower()
 
     response = client.post(
         "/v1/runs",
+        params=SYNC,
         json={**passing_spec(), "engines": [{"name": "not-an-engine"}]},
     )
     assert response.status_code == 400
@@ -84,7 +88,7 @@ def test_create_run_rejects_invalid_spec_with_400_and_persists_nothing(client: T
 
 
 def test_create_run_reports_execution_failure_with_500_and_records_the_run(client: TestClient):
-    response = client.post("/v1/runs", json=failing_spec())
+    response = client.post("/v1/runs", params=SYNC, json=failing_spec())
     assert response.status_code == 500
 
     detail = response.json()["detail"]
@@ -99,7 +103,7 @@ def test_create_run_reports_execution_failure_with_500_and_records_the_run(clien
 
 
 def test_create_run_completes_synchronously_and_is_readable(client: TestClient):
-    response = client.post("/v1/runs", json=passing_spec())
+    response = client.post("/v1/runs", params=SYNC, json=passing_spec())
     assert response.status_code == 200
 
     body = response.json()
@@ -139,7 +143,7 @@ def test_unknown_run_is_404(client: TestClient, suffix: str):
 
 @pytest.fixture
 def completed_run(client: TestClient) -> str:
-    response = client.post("/v1/runs", json=passing_spec())
+    response = client.post("/v1/runs", params=SYNC, json=passing_spec())
     assert response.status_code == 200
     return response.json()["run_id"]
 
@@ -178,15 +182,19 @@ def test_bundle_read_endpoints_404_for_unknown_run(client: TestClient, name: str
 
 
 def test_bundle_read_endpoints_404_when_file_is_absent_for_failed_run(client: TestClient):
-    failed = client.post("/v1/runs", json=failing_spec()).json()["detail"]
+    failed = client.post("/v1/runs", params=SYNC, json=failing_spec()).json()["detail"]
     run_id = failed["run_id"]
 
     assert client.get(f"/v1/runs/{run_id}/manifest").status_code == 200
     assert client.get(f"/v1/runs/{run_id}/manifest").json()["status"] == "failed"
-    for name in ("scorecard", "summary", "invocations"):
+    for name in ("scorecard", "summary"):
         response = client.get(f"/v1/runs/{run_id}/{name}")
         assert response.status_code == 404, name
         assert "not available" in response.json()["detail"]
+    # Invocations are written after every engine, so the one that failed is on record.
+    invocations = client.get(f"/v1/runs/{run_id}/invocations")
+    assert invocations.status_code == 200
+    assert [item["status"] for item in invocations.json()] == ["failed"]
 
 
 def test_artifact_download_serves_bundle_files_with_safe_headers(client: TestClient, completed_run: str, orchestrator: Orchestrator):
@@ -411,7 +419,7 @@ def test_run_rows_mask_sqlite_error_message_for_legacy_runs(legacy_failed_bundle
 
 
 def test_run_rows_keep_error_message_for_current_bundles(client: TestClient):
-    failed = client.post("/v1/runs", json=failing_spec()).json()["detail"]
+    failed = client.post("/v1/runs", params=SYNC, json=failing_spec()).json()["detail"]
     row = client.get(f"/v1/runs/{failed['run_id']}").json()
     assert "fail_open=false" in row["error_message"]
     [listed] = client.get("/v1/runs").json()
@@ -428,7 +436,7 @@ def test_inline_artifact_responses_carry_csp_and_no_store(client: TestClient, co
 
 
 def test_run_id_slug_is_filesystem_and_header_safe(client: TestClient):
-    response = client.post("/v1/runs", json=passing_spec(name='Weird "Name"/with\\odd chars\n'))
+    response = client.post("/v1/runs", params=SYNC, json=passing_spec(name='Weird "Name"/with\\odd chars\n'))
     assert response.status_code == 200
     run_id = response.json()["run_id"]
     assert re.fullmatch(r"run-[a-z0-9._-]+", run_id), run_id

@@ -1,8 +1,10 @@
 """FastAPI control-plane for Redplane.
 
-`POST /v1/runs` is synchronous: the request blocks until the orchestrator
-returns, bounded only by `budget.max_duration_seconds` (14400 s for
-`weekly_deep`). Async job submission is tracked separately (#18).
+`POST /v1/runs` is asynchronous (#18): the spec is validated, recorded as `queued`
+and handed to the process's single `RunWorker` thread; the response is `202` with
+the `run_id` and `GET /v1/runs/{id}` reports `queued → running → completed|failed`
+plus the orchestrator's stage events. `?wait=true` keeps the old synchronous
+contract (the request blocks until the run returns) for tests and scripts.
 """
 
 from __future__ import annotations
@@ -10,12 +12,13 @@ from __future__ import annotations
 import os
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .artifact_policy import artifact_response_policy
 from .auth import api_key_from_env, install_auth
@@ -26,7 +29,9 @@ from .constants import (
     LEGACY_RAW_DOWNLOAD_ALLOWLIST,
     REDACTED_BUNDLE_MIN_VERSION,
     SEVERITY_ORDER,
+    STAGE_EVENTS_FILE,
 )
+from .jobs import RunWorker
 from .orchestrator import Orchestrator
 from .policy.waivers import waiver_is_active
 from .report import parse_eval_min_pass_rate
@@ -51,6 +56,7 @@ BUNDLE_JSON_ENDPOINTS = {
     "summary": "run_summary.json",
     "manifest": "run_manifest.json",
     "invocations": "engine_invocations.json",
+    "stages": STAGE_EVENTS_FILE,
 }
 
 _ARTIFACT_HEADERS = ARTIFACT_RESPONSE_HEADERS
@@ -83,8 +89,22 @@ def create_app(orchestrator: Orchestrator | None = None, *, api_key: str | None 
     gate described in `urt.auth`; None leaves everything open (loopback use).
     """
     orch = orchestrator or _build_orchestrator()
-    app = FastAPI(title="Redplane API", version="0.1.0")
+    # A previous process may have died mid-run: its `queued`/`running` rows are marked
+    # failed now, before anything can be submitted, and are never re-executed.
+    orch.recover_interrupted_runs()
+    worker = RunWorker(orch)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        worker.start()
+        try:
+            yield
+        finally:
+            worker.stop(timeout=5)
+
+    app = FastAPI(title="Redplane API", version="0.1.0", lifespan=lifespan)
     app.state.orchestrator = orch
+    app.state.run_worker = worker
     install_auth(app, api_key if api_key is not None else api_key_from_env())
 
     def _require_run(run_id: str) -> dict[str, Any]:
@@ -109,17 +129,29 @@ def create_app(orchestrator: Orchestrator | None = None, *, api_key: str | None 
         _check_threshold(gate_threshold)
         return orch.list_runs(gate_threshold=gate_threshold)
 
-    @app.post("/v1/runs")
-    def create_run(payload: dict[str, Any]) -> dict[str, Any]:
+    @app.post("/v1/runs", status_code=202)
+    def create_run(payload: dict[str, Any], wait: bool = Query(default=False)) -> Response:
+        """Queue a run (`202` + `run_id`; poll `GET /v1/runs/{id}`). `?wait=true` executes
+        in the request instead: `200` completed / `500` failed, as before #18."""
         try:
             spec = RunSpec.from_dict(payload)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        result = orch.execute(spec)
-        if result.get("status") != "completed":
-            raise HTTPException(status_code=500, detail=result)
-        return result
+        if wait:
+            result = orch.execute(spec)
+            if result.get("status") != "completed":
+                raise HTTPException(status_code=500, detail=result)
+            return JSONResponse(result, status_code=200)
+
+        run_id = worker.submit(spec)
+        location = f"/v1/runs/{run_id}"
+        row = orch.get_run(run_id) or {}
+        return JSONResponse(
+            {"run_id": run_id, "status": row.get("status", "queued"), "location": location},
+            status_code=202,
+            headers={"Location": location},
+        )
 
     @app.get("/v1/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:
@@ -181,7 +213,16 @@ def create_app(orchestrator: Orchestrator | None = None, *, api_key: str | None 
             raise HTTPException(status_code=404, detail="Artifact not found") from exc
         return _artifact_response(path, relative_path)
 
+    @app.get("/v1/runs/{run_id}/stages")
+    def get_stages(run_id: str) -> list[dict[str, Any]]:
+        """Orchestrator stage events so far (`[]` for a run that has not started). Discrete
+        stages — engine/evaluator started or ended on a target — not a progress fraction."""
+        _require_run(run_id)
+        return orch.stage_events(run_id) or []
+
     for endpoint_name, bundle_file in BUNDLE_JSON_ENDPOINTS.items():
+        if endpoint_name == "stages":
+            continue
 
         def _make_bundle_reader(file_name: str) -> Callable[[str], Any]:
             def read_bundle(run_id: str) -> Any:
