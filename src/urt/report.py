@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import html
 import json
+from dataclasses import asdict, dataclass, field
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -228,35 +229,111 @@ def sort_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def evaluate_gate(
+@dataclass(slots=True)
+class GateResult:
+    """Structured gate verdict: what blocks, what was waived and by which waiver."""
+
+    ok: bool
+    threshold: str
+    message: str
+    blocking: list[dict[str, Any]] = field(default_factory=list)
+    waived: list[dict[str, Any]] = field(default_factory=list)
+    # True when waivers were supplied to the evaluation (not: a waiver matched).
+    waivers_considered: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "GateResult":
+        return cls(
+            ok=bool(payload["ok"]),
+            threshold=str(payload["threshold"]),
+            message=str(payload.get("message", "")),
+            blocking=list(payload.get("blocking", [])),
+            waived=list(payload.get("waived", [])),
+            waivers_considered=bool(payload.get("waivers_considered", False)),
+        )
+
+
+def _gate_finding_row(finding: UnifiedFinding) -> dict[str, Any]:
+    return {
+        "finding_id": finding.finding_id,
+        "severity": finding.severity,
+        "target_id": finding.target_id,
+        "engine": finding.engine,
+        "category": finding.category,
+        "sub_category": finding.sub_category,
+        "description": finding.description,
+    }
+
+
+def _severity_sort_key(row: dict[str, Any]) -> tuple[int, str]:
+    return (-SEVERITY_ORDER.get(str(row.get("severity", "info")).lower(), -1), str(row.get("finding_id", "")))
+
+
+def gate_result(
     findings: list[UnifiedFinding],
     threshold: str = "high",
     *,
     waivers: list[dict[str, Any]] | None = None,
-) -> tuple[bool, str]:
-    threshold_name = threshold.upper()
-    active_waivers = list(waivers or [])
-    blocking: list[UnifiedFinding] = []
-    waived_count = 0
-    threshold_value = SEVERITY_ORDER.get(threshold.lower())
+) -> GateResult:
+    threshold_key = threshold.lower()
+    threshold_value = SEVERITY_ORDER.get(threshold_key)
     if threshold_value is None:
         raise ValueError(f"Unsupported threshold: {threshold}")
+    threshold_name = threshold_key.upper()
+    active_waivers = list(waivers or [])
 
+    blocking: list[dict[str, Any]] = []
+    waived: list[dict[str, Any]] = []
     for finding in findings:
         level = SEVERITY_ORDER.get(finding.severity.lower(), -1)
         if level < threshold_value:
             continue
         matched = matching_waiver(finding, active_waivers)
         if matched:
-            waived_count += 1
+            waived.append(
+                {
+                    **_gate_finding_row(finding),
+                    "waiver_id": matched.get("waiver_id"),
+                    "control_id": matched.get("control_id"),
+                    "owner": matched.get("owner"),
+                    "expires_at": matched.get("expires_at"),
+                }
+            )
             continue
-        blocking.append(finding)
+        blocking.append(_gate_finding_row(finding))
+
+    blocking.sort(key=_severity_sort_key)
+    waived.sort(key=_severity_sort_key)
 
     if blocking:
-        waived_note = f" ({waived_count} waived)" if waived_count else ""
-        return False, f"Gate failed: at least one finding severity >= {threshold_name}{waived_note}"
-    if waived_count:
-        return True, (
-            f"Gate passed: {waived_count} finding(s) waived, none remaining severity >= {threshold_name}"
+        waived_note = f" ({len(waived)} waived)" if waived else ""
+        message = f"Gate failed: at least one finding severity >= {threshold_name}{waived_note}"
+    elif waived:
+        message = (
+            f"Gate passed: {len(waived)} finding(s) waived, none remaining severity >= {threshold_name}"
         )
-    return True, f"Gate passed: no findings severity >= {threshold_name}"
+    else:
+        message = f"Gate passed: no findings severity >= {threshold_name}"
+
+    return GateResult(
+        ok=not blocking,
+        threshold=threshold_key,
+        message=message,
+        blocking=blocking,
+        waived=waived,
+        waivers_considered=bool(active_waivers),
+    )
+
+
+def evaluate_gate(
+    findings: list[UnifiedFinding],
+    threshold: str = "high",
+    *,
+    waivers: list[dict[str, Any]] | None = None,
+) -> tuple[bool, str]:
+    """Boolean/message view of `gate_result`, kept for `urt gate` and existing callers."""
+    result = gate_result(findings, threshold, waivers=waivers)
+    return result.ok, result.message

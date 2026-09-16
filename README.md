@@ -282,6 +282,7 @@ uv run urt waivers create --target-id <TARGET> --control-id LLM01:2025 --reason 
 uv run urt waivers list
 uv run urt report --run-id <RUN_ID> --output-dir ./reports/<RUN_ID>
 uv run urt gate --run-id <RUN_ID> --threshold high
+uv run urt gate --run-id <RUN_ID> --threshold high --explain   # list blocking + waived findings
 uv run urt serve-api --host 127.0.0.1 --port 8000
 uv run urt serve-gateway --config templates/gateway_config.sample.yaml
 ```
@@ -1312,6 +1313,7 @@ Endpoints:
 - `GET /v1/runs/{run_id}`
 - `GET /v1/runs/{run_id}/findings`
 - `GET /v1/runs/{run_id}/artifacts`
+- `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists
 - `POST /v1/waivers`
 - `GET /v1/waivers`
 
@@ -1392,7 +1394,7 @@ These `RunSpec` / gateway fields are **enforced at runtime** (not schema-only):
 | `enabled_scenarios` | Promptfoo filters dataset/preset rows; other CLIs receive `URT_ENABLED_SCENARIOS` |
 | `rate_limits` | HTTP send spacing (`requests_per_minute` / `min_interval_seconds`) |
 | evaluator `fail_open: false` | Failed evaluator aborts the run (same as engines) |
-| waivers | `urt gate` skips matching active findings; `--ignore-waivers` bypasses |
+| waivers | `urt gate` skips matching active findings; `--ignore-waivers` bypasses; `--explain` lists blocking and waived findings with the waiver that matched |
 | spec `${VAR_NAME}` | Expanded from the process environment at `load_run_spec` |
 | `gateway.api_key` | Optional; missing key keeps the open Promptfoo dummy-key path |
 
