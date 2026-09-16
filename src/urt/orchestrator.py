@@ -357,12 +357,22 @@ class Orchestrator:
                     "budget": budget.snapshot(),
                 },
             )
+            self._write_failure_reports(run_id, store)
             return {
                 "run_id": run_id,
                 "status": "failed",
                 "error": error_message,
                 "error_log_path": error_path,
             }
+
+    def _write_failure_reports(self, run_id: str, store: ArtifactStore) -> None:
+        # Best effort: the failure is already recorded in SQLite and the manifest, and
+        # a reviewer needs report.html to see it. A renderer bug must not replace the
+        # recorded failure with an unhandled exception.
+        try:
+            self.write_reports(run_id, store=store)
+        except Exception as exc:  # noqa: BLE001
+            store.write_text(run_id, "report_error.log", f"report rendering failed: {exc}\n")
 
     def write_reports(self, run_id: str, *, store: ArtifactStore | None = None) -> dict[str, str]:
         """(Re)render report.md/html/csv from the bundle on disk and rebuild the index.

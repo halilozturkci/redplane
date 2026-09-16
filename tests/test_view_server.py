@@ -6,6 +6,7 @@ the same path confinement, media-type and legacy-bundle rules as the API.
 
 from __future__ import annotations
 
+import re
 import threading
 from http.client import HTTPConnection
 
@@ -65,6 +66,39 @@ def test_root_serves_the_viewer_and_relative_evidence_links_resolve(rich_bundle:
     status, headers, _ = _get(port, "/report.html")
     assert status == 200
     assert headers["content-type"].startswith("text/html")
+
+
+def test_only_report_html_renders_inline_other_html_is_an_attachment(rich_bundle: Bundle, served):
+    digest = rich_bundle.run_dir / "raw" / "garak" / "digest.html"
+    digest.write_text("<script>document.title='pwned-'+location.origin</script>", encoding="utf-8")
+    port = served(rich_bundle)
+
+    status, headers, body = _get(port, "/raw/garak/digest.html")
+    assert status == 200
+    assert headers["content-disposition"] == 'attachment; filename="digest.html"'
+    assert headers["content-security-policy"] == "default-src 'none'; sandbox"
+    assert headers["x-content-type-options"] == "nosniff"
+    assert b"pwned" in body  # served as a download, never rendered in the viewer origin
+
+    # The viewer itself carries its meta CSP as a header too (plus frame-ancestors,
+    # which a meta tag cannot express).
+    status, headers, body = _get(port, "/")
+    assert status == 200
+    assert "content-disposition" not in headers
+    meta = re.search(rb'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', body).group(1).decode()
+    assert headers["content-security-policy"] == f"{meta}; frame-ancestors 'none'"
+    assert "script-src 'sha256-" in headers["content-security-policy"]
+    # /report.html is the same file and gets the same treatment.
+    status, headers, _ = _get(port, "/report.html")
+    assert "content-disposition" not in headers
+    assert headers["content-security-policy"].startswith("default-src 'none'; script-src 'sha256-")
+
+
+def test_failed_run_is_viewable(failed_bundle: Bundle, served):
+    port = served(failed_bundle)
+    status, headers, body = _get(port, "/")
+    assert status == 200
+    assert b"fail_open=false" in body
 
 
 @pytest.mark.parametrize("path", ["/../other.json", "/raw/../../x", "/raw//x", "/%2e%2e/x", "/nope.json"])
@@ -134,5 +168,7 @@ def test_cli_view_prints_the_url_and_serves(rich_bundle: Bundle, capsys, monkeyp
     assert f"http://127.0.0.1:{started['port']}/" in out
     assert rich_bundle.run_id in out
 
-    rc = main(["--artifact-root", str(rich_bundle.orchestrator.artifact_store.root_dir), "view", "missing-run"])
-    assert rc == 1
+    for bad in ("missing-run", "..", "."):
+        rc = main(["--artifact-root", str(rich_bundle.orchestrator.artifact_store.root_dir), "view", bad])
+        assert rc == 1, bad
+        assert "Run directory not found" in capsys.readouterr().err

@@ -144,6 +144,26 @@ def test_framework_matrix_counts_attack_findings_per_target_with_unmapped_row(ri
     assert sum(cell.count for row in llm.rows for cell in row.cells.values()) == 4
 
 
+def test_failed_run_error_head_is_shown_for_current_bundles_only(failed_bundle: Bundle, legacy_failed_bundle: Bundle):
+    # Same fixture object, mutated to 1.0 by legacy_failed_bundle; load once per state
+    # is not possible, so assert the legacy state here and the 1.1 state on a fresh run.
+    legacy = load_bundle(legacy_failed_bundle.run_dir, waivers=[])
+    assert legacy.legacy is True
+    assert legacy.status == "failed"
+    assert legacy.error_log_head is None
+    assert LEGACY_SECRET not in str(legacy.manifest.get("error"))
+    assert LEGACY_SECRET not in repr(legacy)
+
+
+def test_current_failed_run_keeps_its_error_head(failed_bundle: Bundle):
+    bundle = load_bundle(failed_bundle.run_dir, waivers=[])
+    assert bundle.legacy is False
+    assert bundle.status == "failed"
+    assert "fail_open=false" in bundle.manifest["error"]
+    assert bundle.error_log_head is not None
+    assert "Traceback" in bundle.error_log_head
+
+
 def test_load_bundle_rejects_missing_run_dir(tmp_path):
     import pytest
 

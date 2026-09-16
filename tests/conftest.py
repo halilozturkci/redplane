@@ -256,3 +256,41 @@ def make_legacy(bundle: Bundle) -> Bundle:
 @pytest.fixture
 def legacy_bundle(rich_bundle: Bundle) -> Bundle:
     return make_legacy(rich_bundle)
+
+
+def failed_spec(name: str = "broken") -> dict:
+    spec = bundle_spec(name)
+    spec["engines"] = [
+        {"name": "garak", "fail_open": False, "params": {"command": f'{PYTHON} -c "raise SystemExit(3)"'}}
+    ]
+    return spec
+
+
+@pytest.fixture
+def failed_bundle(orchestrator: Orchestrator) -> Bundle:
+    from urt.types import RunSpec
+
+    result = orchestrator.execute(RunSpec.from_dict(failed_spec()))
+    assert result["status"] == "failed", result
+    return Bundle(orchestrator=orchestrator, run_id=result["run_id"])
+
+
+@pytest.fixture
+def legacy_failed_bundle(failed_bundle: Bundle) -> Bundle:
+    """A pre-1.1 failed run: `TimeoutExpired` put the full argv (with a secret) into
+    `run_error.log` and the manifest `error`, and 1.0 never scrubbed either."""
+    run_dir = failed_bundle.run_dir
+    argv = f"['tool', '--api-key', '{LEGACY_SECRET}']"
+    manifest = failed_bundle.read_json("run_manifest.json")
+    manifest["bundle_format_version"] = "1.0"
+    manifest["error"] = f"Command {argv} timed out after 600 seconds"
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "run_error.log").write_text(
+        "Traceback (most recent call last):\n  ...\n"
+        f"subprocess.TimeoutExpired: Command {argv} timed out after 600 seconds\n",
+        encoding="utf-8",
+    )
+    failed_bundle.orchestrator.metadata_store.update_run(
+        failed_bundle.run_id, status="failed", updated_at="t", error_message=manifest["error"]
+    )
+    return failed_bundle

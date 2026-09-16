@@ -119,6 +119,22 @@
     document.body.classList.add("js-ready");
   }
 
+  function openFromHash() {
+    var hash = window.location.hash;
+    if (hash.indexOf("#finding=") !== 0) { return; }
+    var wanted;
+    try {
+      wanted = decodeURIComponent(hash.slice("#finding=".length));
+    } catch (err) {
+      return; // malformed hash: ignore it, the rest of the page stays interactive
+    }
+    var node = document.querySelector('details.finding[data-finding-id="' + cssEscape(wanted) + '"]');
+    if (!node) { return; }
+    node.hidden = false;
+    node.open = true;
+    node.scrollIntoView();
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", wire);
   } else {

@@ -35,6 +35,10 @@ FRAMEWORK_LABELS = {
     "mitre_atlas": "MITRE ATLAS",
 }
 ERROR_LOG_HEAD_LINES = 40
+LEGACY_ERROR_WITHHELD = (
+    f"error text not shown for pre-{REDACTED_BUNDLE_MIN_VERSION} bundles "
+    "(it may contain unscrubbed command lines); read run_error.log on disk"
+)
 
 
 def _parse_version(value: str | None) -> tuple[int, ...]:
@@ -395,17 +399,24 @@ def load_bundle(
         return redact_bundle_payload(content, legacy=legacy)
 
     findings = redacted("findings.json", [])
+    redacted_manifest = redact_bundle_payload(manifest, legacy=legacy)
+    if legacy:
+        # Free-text error channels: pre-1.1 never scrubbed them and `TimeoutExpired`
+        # puts the full argv (secrets included) there. Key heuristics cannot see
+        # inside a string, so the whole channel is withheld for legacy bundles.
+        if "error" in redacted_manifest:
+            redacted_manifest["error"] = LEGACY_ERROR_WITHHELD
     return build_bundle(
         run_id=str(manifest.get("run_id") or root.name),
         scorecard=redacted("scorecard.json", None),
         findings=findings if isinstance(findings, list) else [],
-        manifest=redact_bundle_payload(manifest, legacy=legacy),
+        manifest=redacted_manifest,
         summary=redacted("run_summary.json", {}),
         resolved_spec=redacted("resolved_spec.json", {}),
         invocations=redacted("engine_invocations.json", []),
         artifacts=_read_json(root, "artifacts_index.json") or [],
         waivers=waivers,
         run_dir=root,
-        error_log_head=_error_log_head(root),
+        error_log_head=None if legacy else _error_log_head(root),
         metadata_cap=metadata_cap,
     )

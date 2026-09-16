@@ -4,8 +4,9 @@
 - Core code lives in `src/urt/` with a `src` layout. Product name is **Redplane**; CLI/import remain `urt`.
 - Key modules:
   - `cli.py`, `orchestrator.py`, `types.py`, `constants.py`, `runtime.py`
-  - `gateway/` for the OpenAI-compatible gateway server and routing
-  - `normalization/`, `policy/` (including waivers), `storage/` for findings mapping and persistence
+ - `gateway/` for the OpenAI-compatible gateway server and routing
+ - `ui/` for the bundle reader, Jinja2 templates, the self-contained `report.html` viewer and the `urt view` server
+ - `normalization/`, `policy/` (including waivers), `storage/` for findings mapping and persistence
 - Tests are in `tests/` (unit-focused, no external services required).
 - Operational scripts are in `scripts/` (`bootstrap_uv.sh`, tooling installers, gateway launcher).
 - Specs and examples live in `templates/`, `examples/`, and supporting docs in `docs/`.
@@ -19,6 +20,7 @@
 - `uv run urt validate --spec templates/run_spec.smoke.yaml` — validate the smoke run spec
 - `uv run urt validate --spec templates/run_spec.mcs_real.sample.yaml` — validate a real MCS spec
 - `uv run urt run --spec templates/run_spec.mcs_real.sample.yaml` — execute a real red-team run
+- `uv run urt view <run_id>` — serve one run directory (viewer + bundle files) on loopback.
 - `uv run urt serve-gateway --config templates/gateway_config.sample.yaml` — start gateway.
 - `uv run pytest` — run the full test suite.
 - CI on pull requests and `main`: Node floor check, `uv lock --check`, `uv sync --extra dev --frozen`, pytest, `uv run urt --help`.
