@@ -4,7 +4,8 @@
 - Core code lives in `src/urt/` with a `src` layout. Product name is **Redplane**; CLI/import remain `urt`.
 - Key modules:
   - `cli.py`, `orchestrator.py`, `types.py`, `constants.py`, `runtime.py`
- - `gateway/` for the OpenAI-compatible gateway server and routing
+ - `jobs.py` (background worker for async `POST /v1/runs`), `matrix.py`, `coverage_csv.py`, `gateway_client.py`
+ - `gateway/` for the OpenAI-compatible gateway server, routing and the read-only trace index (`traces.py`)
  - `ui/` for the bundle reader, Jinja2 templates, the self-contained `report.html` viewer and the `urt view` server
  - `normalization/`, `policy/` (including waivers), `storage/` for findings mapping and persistence
 - Tests are in `tests/` (unit-focused, no external services required).

@@ -30,8 +30,10 @@ from .constants import (
     STAGE_EVENTS_FILE,
     TERMINAL_RUN_STATUSES,
 )
+from .coverage_csv import coverage_csv
 from .diff import RunDiff, TrendPoint, diff_runs
 from .gateway.traces import TraceIndex
+from .matrix import DEFAULT_RUN_LIMIT, RunMatrix, build_run_matrix
 from .jobs import current_worker_id, worker_is_alive
 from .normalization import build_scorecard, normalize_findings
 from .policy.waivers import parse_expiry, preview_matches, waiver_is_active
@@ -924,6 +926,10 @@ class Orchestrator:
             eval_pass_rate=scorecard_eval_pass_rate(self.artifact_store.read_json(run_id, "scorecard.json")),
         )
 
+    def run_findings(self, run_id: str) -> list[UnifiedFinding] | None:
+        """The run's normalized findings from `findings.json`; None until the file exists."""
+        return self._run_findings(run_id)
+
     def _run_findings(self, run_id: str) -> list[UnifiedFinding] | None:
         run = self.metadata_store.get_run(run_id)
         if not run:
@@ -947,6 +953,14 @@ class Orchestrator:
             findings_b,
             self.artifact_store.read_json(run_b, "scorecard.json"),
         )
+
+    def run_matrix(self, *, target: str | None = None, name_prefix: str | None = None, limit: int = DEFAULT_RUN_LIMIT) -> RunMatrix:
+        """Targets × runs matrix over the enriched run rows (newest first)."""
+        return build_run_matrix(self.list_runs(), self.run_findings, target=target, name_prefix=name_prefix, limit=limit)
+
+    def coverage_csv(self, run_id: str) -> str | None:
+        coverage = self.coverage(run_id)
+        return None if coverage is None else coverage_csv(coverage)
 
     def trend(self, target_id: str) -> list[TrendPoint]:
         """Per-run numbers for one target, oldest first. Empty when no run has findings

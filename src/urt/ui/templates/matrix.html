@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Redplane run matrix{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Run matrix</h1>
+<p class="note">{{ matrix.note }} Newest runs first; runs without findings yet are not shown.</p>
+<form class="filters" method="get" action="/ui/matrix">
+  <label>Target
+    <select name="target">
+      <option value="">all</option>
+      {% for target in all_targets %}<option value="{{ target }}"{% if matrix.filters.target == target %} selected{% endif %}>{{ target }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Name prefix <input type="text" name="name_prefix" value="{{ matrix.filters.name_prefix }}" placeholder="&lt;agent&gt;-&lt;engine&gt;-real-"></label>
+  <label>Runs (columns) <input type="number" name="limit" min="1" max="{{ max_limit }}" value="{{ matrix.filters.limit }}"></label>
+  <button type="submit">Apply</button>
+  <a href="/ui/matrix">Reset</a>
+  <a href="/v1/matrix?{{ query }}">JSON</a>
+</form>
+{% if matrix.truncated %}<p class="note">Showing the newest {{ matrix.filters.limit }} runs; raise the limit or narrow the filters to see older ones.</p>{% endif %}
+{% if matrix.runs and matrix.targets %}
+<table class="matrix run-matrix">
+  <thead>
+    <tr>
+      <th>Target</th>
+      {% for run in matrix.runs %}
+      <th><a href="/ui/runs/{{ run.run_id }}">{{ run.name }}</a><div class="note mono">{{ run.created_at }}</div><div class="note">{{ run.profile }} · {{ run.status }}</div></th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for target in matrix.targets %}
+    <tr>
+      <td><a href="/ui/targets/{{ target | urlencode }}/trend">{{ target }}</a></td>
+      {% for run in matrix.runs %}
+      {% set cell = matrix.cells[target][run.run_id] %}
+      {% if cell is none %}
+      <td class="cell muted" title="run did not include this target">—</td>
+      {% else %}
+      {% set worst = 'critical' if cell.critical else ('high' if cell.high else ('medium' if cell.medium else ('low' if cell.low else 'info'))) %}
+      <td class="cell sev-{{ worst }}">
+        <div><span class="badge sev-critical">{{ cell.critical }} C</span> <span class="badge sev-high">{{ cell.high }} H</span></div>
+        <div class="note">{{ cell.total_findings }} findings · ASR {{ cell.asr_overall | pct }} ({{ cell.success_count }}/{{ cell.total_attacks }})</div>
+        <div class="note"><a href="/ui/runs/{{ run.run_id }}/findings?target={{ target | urlencode }}">findings</a></div>
+      </td>
+      {% endif %}
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No runs with findings match.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}
