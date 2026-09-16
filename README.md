@@ -1210,13 +1210,29 @@ Canonical files:
 - `report.html`
 - `report.csv`
 
-Bundle format version (`run_manifest.json.bundle_format_version`) is `1.1`:
-`resolved_spec.json` and `run_manifest.json` are written with every target `auth`
-value and any key matching `*token*`, `*secret*`, `*password*`, `api_key`,
-`authorization` replaced by `***REDACTED***`. Expanded `${VAR}` credentials never
-reach the bundle. `urt validate` and `urt serve-gateway --print-effective-config`
-print the same redacted view. Bundles written before `1.1` (`1.0`) may contain
-expanded credentials; treat them as sensitive.
+Bundle format version (`run_manifest.json.bundle_format_version`) is `1.1`. Two
+redaction layers apply at write time (`src/urt/redaction.py`):
+
+- **Key/position rules** — in `resolved_spec.json` and `run_manifest.json` every
+  target `auth` value and any key matching `*token*`, `*secret*`, `*password*`,
+  `api_key`, `authorization` is replaced by `***REDACTED***`.
+- **Value scrubbing** — the set of known secret values (every `${VAR}` substitution
+  made by `load_run_spec`, plus every value the key/position rules mask, plus the bare
+  token behind a `Bearer `/`Basic ` prefix) is replaced wherever it appears as a
+  substring in anything the run writes or prints: `params.command` argv,
+  `endpoint` query strings, `metrics.command`, raw tool stdout/stderr, sidecars,
+  tracebacks, `run_error.log`, SQLite findings and `error_message`, `urt run` /
+  `urt findings` / `urt probe` / `urt validate` stdout and the `POST /v1/runs`
+  response. Command adapters record `env_override_keys` (names only), never the
+  `params.env` values.
+
+Limits, stated plainly: values shorter than 8 characters are not value-scrubbed
+(still masked by key rules); specs submitted to `POST /v1/runs` carry no `${VAR}`
+knowledge, so only credential *values* found by the key/position rules are scrubbed
+there; a tool that transforms a secret (base64, hashing, splitting) before echoing
+it defeats substring scrubbing. `urt serve-gateway --print-effective-config` applies
+the key/position rules. Bundles written before `1.1` (`1.0`) may contain expanded
+credentials; treat them as sensitive.
 
 Raw engine logs/artifacts:
 - `raw/<engine>/<target_id>_stdout.log`
