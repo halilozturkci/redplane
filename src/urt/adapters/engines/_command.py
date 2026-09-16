@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..engine_base import EngineAdapter, EngineContext
-from ...runtime import build_runtime_env, limit_evidence_text
+from ...runtime import build_runtime_env, limit_evidence_text, run_tool_process
 from ...types import EngineRunResult, UnifiedFinding
 
 
@@ -44,16 +43,7 @@ class CommandEngineAdapter(EngineAdapter):
             for key, value in env_overrides.items():
                 env[str(key)] = str(value)
 
-        process = subprocess.run(  # noqa: S603
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-            env=env,
-            cwd=str(cwd) if cwd is not None else None,
-        )
+        process = run_tool_process(command, timeout_seconds=timeout_seconds, env=env, cwd=cwd)
         return CommandRunResult(
             returncode=process.returncode,
             stdout=process.stdout,

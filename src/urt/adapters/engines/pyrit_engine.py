@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from ..engine_base import EngineContext
-from ...runtime import build_runtime_env, limit_evidence_text
+from ...runtime import build_runtime_env, limit_evidence_text, run_tool_process
 from ...types import EngineRunResult, UnifiedFinding
 from ._command import CommandEngineAdapter
 
@@ -71,16 +70,7 @@ class PyRITEngineAdapter(CommandEngineAdapter):
 
         env = os.environ.copy()
         env.update(build_runtime_env(context))
-        process = subprocess.run(  # noqa: S603
-            command_parts,
-            cwd=str(working_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=context.timeout_seconds,
-            check=False,
-            env=env,
-        )
+        process = run_tool_process(command_parts, timeout_seconds=context.timeout_seconds, env=env, cwd=working_dir)
 
         stdout_path = self._write_text_artifact(
             context,

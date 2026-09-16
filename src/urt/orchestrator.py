@@ -64,6 +64,14 @@ INTERRUPTED_MESSAGE = (
     "interrupted: the process executing this run exited before it finished "
     "(status was {status}); the bundle on disk is partial and the run was not re-executed"
 )
+STOPPED_MESSAGE = (
+    "interrupted: the control plane was stopped while this run was {status}; the engine process "
+    "group was terminated, the bundle on disk is partial and the run was not re-executed"
+)
+
+
+class RunInterrupted(RuntimeError):
+    """Raised inside `execute` when the run was asked to stop (control-plane shutdown)."""
 
 
 class StageLog:
@@ -92,6 +100,16 @@ class Orchestrator:
     ):
         self.artifact_store = ArtifactStore(artifact_root)
         self.metadata_store = MetadataStore(metadata_db)
+        self._interrupt_requested: set[str] = set()
+
+    def interrupt_run(self, run_id: str) -> None:
+        """Ask a run executing in this process to stop at its next stage boundary (the
+        worker also kills the tool process group, so the boundary comes quickly)."""
+        self._interrupt_requested.add(run_id)
+
+    def _check_interrupted(self, run_id: str) -> None:
+        if run_id in self._interrupt_requested:
+            raise RunInterrupted(STOPPED_MESSAGE.format(status="running"))
 
     @staticmethod
     def _utc_now() -> str:
@@ -220,6 +238,7 @@ class Orchestrator:
                 try:
                     target_engine_results: list[EngineRunResult] = []
                     for engine_spec in spec.engines:
+                        self._check_interrupted(run_id)
                         budget.check(stage=f"before engine {engine_spec.name} on {target_spec.target_id}")
                         engine_adapter = create_engine_adapter(engine_spec)
                         context = EngineContext(
@@ -242,6 +261,8 @@ class Orchestrator:
                         result = self._safe_run_engine(engine_adapter, context)
                         invocation_duration = perf_counter() - invocation_started
                         invocation_ended_at = self._utc_now()
+                        # A killed tool must not pass as an ordinary fail_open failure.
+                        self._check_interrupted(run_id)
                         stages.record(
                             "engine",
                             result.status,
@@ -291,6 +312,7 @@ class Orchestrator:
                     target_findings = [f for f in all_findings if f.target_id == target_spec.target_id]
 
                     for evaluator_spec in spec.evaluators:
+                        self._check_interrupted(run_id)
                         budget.check(
                             stage=f"before evaluator {evaluator_spec.name} on {target_spec.target_id}"
                         )
@@ -319,6 +341,7 @@ class Orchestrator:
                         )
                         stages.record("evaluator", "started", evaluator=evaluator_spec.name, target_id=target_spec.target_id)
                         eval_result = self._safe_run_evaluator(evaluator_adapter, eval_context)
+                        self._check_interrupted(run_id)
                         stages.record(
                             "evaluator",
                             eval_result.status,
@@ -470,14 +493,17 @@ class Orchestrator:
                 "error": error_message,
                 "error_log_path": error_path,
             }
+        finally:
+            self._interrupt_requested.discard(run_id)
 
     # --- run lifecycle bookkeeping (async submissions, crash recovery) ---
 
     def mark_run_failed(self, run_id: str, message: str) -> None:
         """Record a failure for a run whose `execute` never got to write one (worker
-        error, interrupted process). Writes a failed manifest unless one exists."""
+        error, interrupted process). Writes a failed manifest unless one exists. A row
+        that is already terminal is left as it is."""
         row = self.metadata_store.get_run(run_id)
-        if row is None:
+        if row is None or row.get("status") in TERMINAL_RUN_STATUSES:
             return
         now = self._utc_now()
         self.metadata_store.update_run(run_id, status="failed", updated_at=now, error_message=message)
