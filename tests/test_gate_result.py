@@ -67,8 +67,13 @@ def test_gate_result_lists_blocking_and_waived_findings():
     assert result.message == "Gate failed: at least one finding severity >= HIGH (1 waived)"
 
     as_dict = result.to_dict()
-    assert set(as_dict) >= {"ok", "threshold", "message", "blocking", "waived"}
+    assert set(as_dict) >= {"ok", "threshold", "message", "blocking", "waived", "waivers_considered"}
     assert as_dict["blocking"][0]["finding_id"] == "f-critical"
+    # "considered" = waivers were supplied to the evaluation, not "a waiver matched".
+    assert result.waivers_considered is True
+    assert gate_result(findings, "high").waivers_considered is False
+    assert "waivers_applied" not in as_dict
+    assert GateResult.from_dict(as_dict) == result
 
 
 def test_gate_result_blocking_is_sorted_by_severity_then_id():

@@ -238,10 +238,22 @@ class GateResult:
     message: str
     blocking: list[dict[str, Any]] = field(default_factory=list)
     waived: list[dict[str, Any]] = field(default_factory=list)
-    waivers_applied: bool = False
+    # True when waivers were supplied to the evaluation (not: a waiver matched).
+    waivers_considered: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "GateResult":
+        return cls(
+            ok=bool(payload["ok"]),
+            threshold=str(payload["threshold"]),
+            message=str(payload.get("message", "")),
+            blocking=list(payload.get("blocking", [])),
+            waived=list(payload.get("waived", [])),
+            waivers_considered=bool(payload.get("waivers_considered", False)),
+        )
 
 
 def _gate_finding_row(finding: UnifiedFinding) -> dict[str, Any]:
@@ -312,7 +324,7 @@ def gate_result(
         message=message,
         blocking=blocking,
         waived=waived,
-        waivers_applied=bool(active_waivers),
+        waivers_considered=bool(active_waivers),
     )
 
 
