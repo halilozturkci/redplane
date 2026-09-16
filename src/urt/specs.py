@@ -32,7 +32,7 @@ from .constants import (
     SUPPORTED_TARGETS,
 )
 from .policy.mapping import MITRE_ATLAS_MAP, OWASP_AGENTIC_MAP, OWASP_LLM_MAP
-from .redaction import Scrubber, redact_run_spec_payload
+from .redaction import REDACTED, Scrubber, redact_run_spec_payload
 from .types import RunSpec, ValidationError
 
 TEMPLATES_DIR_ENV = "URT_TEMPLATES_DIR"
@@ -79,12 +79,30 @@ def _yaml():
     return yaml
 
 
+def _no_alias_loader():
+    """`SafeLoader` that refuses anchors/aliases: a spec never needs them, and alias
+    expansion ("billion laughs") turns a few hundred bytes into minutes of CPU while
+    staying under the byte cap."""
+    yaml = _yaml()
+
+    class NoAliasSafeLoader(yaml.SafeLoader):  # type: ignore[misc,name-defined]
+        def compose_node(self, parent, index):  # type: ignore[no-untyped-def]
+            if self.check_event(yaml.AliasEvent):
+                event = self.peek_event()
+                raise yaml.composer.ComposerError(
+                    None, None, "YAML aliases/anchors are not allowed in a run spec", event.start_mark
+                )
+            return super().compose_node(parent, index)
+
+    return NoAliasSafeLoader
+
+
 def parse_spec_text(text: str) -> dict[str, Any]:
     """YAML (or JSON, a YAML subset) → mapping. Raises `SpecInputError` when not a mapping."""
     if len(text.encode("utf-8")) > MAX_SPEC_BYTES:
         raise SpecInputError(f"spec text exceeds {MAX_SPEC_BYTES} bytes")
     try:
-        data = _yaml().safe_load(text)
+        data = _yaml().load(text, Loader=_no_alias_loader())
     except Exception as exc:  # noqa: BLE001 - yaml raises several error classes
         raise ValidationError(f"YAML parse error: {exc}") from exc
     if not isinstance(data, dict):
@@ -225,6 +243,48 @@ class SpecValidation:
         }
 
 
+_MIN_SCRUB_LENGTH = 4
+
+
+def _scrub_errors(errors: list[str], values: set[str]) -> list[str]:
+    """Remove every substituted environment value from error text, case-insensitively
+    (`RunSpec` validators lower-case enum values before echoing them)."""
+    patterns = [re.compile(re.escape(value), re.IGNORECASE) for value in values if len(value) >= _MIN_SCRUB_LENGTH]
+    scrubbed: list[str] = []
+    for message in errors:
+        for pattern in patterns:
+            message = pattern.sub(REDACTED, message)
+        scrubbed.append(message)
+    return scrubbed
+
+
+def _substituted_values(payload: Any) -> set[str]:
+    return {os.environ[name] for name in env_var_names(payload) if name in os.environ and os.environ[name]}
+
+
+def _spec_errors(payload: dict[str, Any]) -> tuple[RunSpec | None, list[str]]:
+    """Build the `RunSpec`, reporting errors that can never contain an expanded value.
+
+    The unexpanded payload is validated first: its messages can only quote `${VAR}`
+    tokens. When that fails but the expanded payload passes (a variable feeding a
+    numeric or enum field with a valid value), the spec is fine. When both fail, the
+    unexpanded message is reported. Only when the unexpanded payload passes and the
+    expanded one fails is an expanded-side message used — scrubbed of every
+    substituted value in any letter case.
+    """
+    substituted: set[str] = set()
+    try:
+        spec = RunSpec.from_dict(expand_env_vars(payload, collected=substituted))
+        spec.secret_values = frozenset(substituted)
+    except (ValidationError, ValueError, TypeError) as expanded_exc:
+        try:
+            RunSpec.from_dict(payload)
+        except (ValidationError, ValueError, TypeError) as unexpanded_exc:
+            return None, [str(unexpanded_exc)]
+        return None, _scrub_errors([str(expanded_exc)], _substituted_values(payload) | substituted)
+    return spec, []
+
+
 def validate_spec_payload(payload: dict[str, Any]) -> SpecValidation:
     """Validate-only: never executes anything, never returns an expanded value."""
     errors = auth_literal_errors(payload)
@@ -233,14 +293,9 @@ def validate_spec_payload(payload: dict[str, Any]) -> SpecValidation:
     profile = str(payload.get("run_profile", DEFAULT_RUN_PROFILE)).strip().lower()
     profile_defaults = RUN_PROFILE_DEFAULTS.get(profile, {})
 
-    substituted: set[str] = set()
-    spec: RunSpec | None = None
+    spec, spec_errors = _spec_errors(payload)
+    errors.extend(spec_errors)
     resolved: dict[str, Any] | None = None
-    try:
-        spec = RunSpec.from_dict(expand_env_vars(payload, collected=substituted))
-        spec.secret_values = frozenset(substituted)
-    except (ValidationError, ValueError, TypeError) as exc:
-        errors.append(str(exc))
     if spec is not None and not errors:
         resolved = Scrubber.from_spec(spec).scrub(redact_run_spec_payload(spec.to_dict()))
     return SpecValidation(

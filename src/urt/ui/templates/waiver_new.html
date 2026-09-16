@@ -15,7 +15,7 @@
   {% if run_id %}<input type="hidden" name="run_id" value="{{ run_id }}">{% endif %}
   {# The preview trigger sits on a div, not the form: htmx validates forms before
      requesting, and reason/owner are still empty while the operator picks a control. #}
-  <div class="preview-source"{% if run_id %} hx-get="/ui/runs/{{ run_id | urlencode }}/waiver-preview" hx-target="#waiver-preview" hx-swap="outerHTML" hx-trigger="change" hx-include="closest form" hx-push-url="false"{% endif %}>
+  <div class="preview-source"{% if run_id %} hx-get="/ui/runs/{{ run_id | urlencode }}/waiver-preview" hx-target="#waiver-preview" hx-swap="outerHTML" hx-trigger="change" hx-include="[name='target_id'],[name='control_id']" hx-push-url="false"{% endif %}>
   <label>Target id
     <input type="text" name="target_id" value="{{ values.target_id }}" required placeholder="target id or * for any">
   </label>

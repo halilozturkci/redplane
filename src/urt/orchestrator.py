@@ -769,7 +769,8 @@ class Orchestrator:
         return None if row is None else self._with_active(row)
 
     def revoke_waiver(self, waiver_id: str, *, note: str | None = None) -> dict[str, Any] | None:
-        """Revoke = expire now. The row stays (append-only audit); the gate stops applying it."""
+        """Revoke = expire now, terminally. The row stays (append-only audit); the gate stops
+        applying it; later expiry changes raise `WaiverRevokedError`."""
         row = self.metadata_store.update_waiver_expiry(waiver_id, self._utc_now(), event="revoked", note=note)
         return None if row is None else self._with_active(row)
 

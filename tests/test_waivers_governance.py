@@ -205,16 +205,61 @@ def test_waiver_revoke_sets_expiry_to_now_and_keeps_history(rich_bundle: Bundle)
     assert [e["event"] for e in events] == ["created", "revoked"]
     assert events[1]["expires_at_before"] == FUTURE
 
-    extended = client.patch("/v1/waivers/w-1", json={"expires_at": FUTURE})
+    # Moving the expiry of a live waiver is allowed and recorded.
+    client.post("/v1/waivers", json=_waiver(waiver_id="w-2"))
+    extended = client.patch("/v1/waivers/w-2", json={"expires_at": FUTURE})
     assert extended.json()["active"] is True
-    assert [e["event"] for e in client.get("/v1/waivers/w-1").json()["events"]] == [
-        "created", "revoked", "expiry_changed"
-    ]
+    assert [e["event"] for e in client.get("/v1/waivers/w-2").json()["events"]] == ["created", "expiry_changed"]
 
-    assert client.patch("/v1/waivers/w-1", json={"expires_at": "soon"}).status_code == 400
-    assert client.patch("/v1/waivers/w-1", json={"owner": "someone"}).status_code == 400
+    assert client.patch("/v1/waivers/w-2", json={"expires_at": "soon"}).status_code == 400
+    assert client.patch("/v1/waivers/w-2", json={"owner": "someone"}).status_code == 400
     assert client.patch("/v1/waivers/missing", json={"revoke": True}).status_code == 404
     assert client.delete("/v1/waivers/w-1").status_code == 405
+
+
+def test_waiver_create_with_existing_id_is_refused_not_rewritten(rich_bundle: Bundle, capsys):
+    """M2: append-only means a second POST with the same id must not rewrite reason/owner/control."""
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    assert client.post("/v1/waivers", json=_waiver()).status_code == 200
+
+    rewrite = client.post("/v1/waivers", json=_waiver(control_id="robustness", reason="REWRITTEN", owner="mallory"))
+    assert rewrite.status_code == 409
+    assert "w-1" in rewrite.json()["detail"]
+
+    stored = client.get("/v1/waivers/w-1").json()
+    assert (stored["control_id"], stored["reason"], stored["owner"]) == (
+        "mitigation.MitigationBypass", "known DAN bypass, ticket SEC-142", "sec-lead@example.test"
+    )
+    assert [e["event"] for e in stored["events"]] == ["created"]
+
+    orch = rich_bundle.orchestrator
+    base = ["--artifact-root", str(orch.artifact_store.root_dir), "--metadata-db", str(orch.metadata_store.db_path)]
+    code = main([*base, "waivers", "create", "--waiver-id", "w-1", "--target-id", TARGET_ID, "--control-id", "x",
+                 "--reason", "r", "--owner", "o", "--expires-at", FUTURE])
+    assert code != 0
+    assert "w-1" in capsys.readouterr().err
+
+
+def test_revoke_is_terminal_and_requires_a_strict_boolean(rich_bundle: Bundle):
+    """M3: a revoked waiver cannot be brought back by moving its expiry; `revoke` is `true`, not truthy."""
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    client.post("/v1/waivers", json=_waiver())
+
+    assert client.patch("/v1/waivers/w-1", json={"revoke": "no"}).status_code == 400
+    assert client.patch("/v1/waivers/w-1", json={"revoke": 1}).status_code == 400
+    assert client.patch("/v1/waivers/w-1", json={"revoke": False}).status_code == 400
+    assert client.get("/v1/waivers/w-1").json()["active"] is True
+
+    assert client.patch("/v1/waivers/w-1", json={"revoke": True}).json()["active"] is False
+
+    revive = client.patch("/v1/waivers/w-1", json={"expires_at": FUTURE})
+    assert revive.status_code == 409
+    assert "revoked" in revive.json()["detail"]
+    stored = client.get("/v1/waivers/w-1").json()
+    assert stored["active"] is False
+    assert [e["event"] for e in stored["events"]] == ["created", "revoked"]
+    # Revoking twice is idempotent-ish: refused too, the first revoke stays the terminal event.
+    assert client.patch("/v1/waivers/w-1", json={"revoke": True}).status_code == 409
 
 
 def test_urt_waivers_revoke_cli(rich_bundle: Bundle, capsys):
@@ -341,6 +386,55 @@ def test_ui_waiver_create_and_revoke_require_csrf(rich_bundle: Bundle):
     assert client.post("/ui/waivers/none/revoke", data={"csrf_token": token}).status_code == 404
     # Nothing on the UI deletes.
     assert client.delete(f"/ui/waivers/{waiver_id}").status_code in {404, 405}
+
+
+def test_csrf_token_is_bound_to_the_session_cookie(rich_bundle: Bundle):
+    """A tossed `urt_csrf` cookie (any other localhost app can set one) must not pass once the
+    operator has a session: the form token is derived from the HttpOnly session value."""
+    from urt.ui.csrf import SESSION_COOKIE, form_token
+
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    client.cookies.set(SESSION_COOKIE, "operator-session-value")
+    page = client.get("/ui/waivers/new")
+    embedded = __import__("re").search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    nonce = client.cookies.get("urt_csrf")
+    assert embedded != nonce  # the page embeds HMAC(session, nonce), not the raw cookie
+    assert embedded == form_token(nonce, "operator-session-value")
+
+    payload = {"target_id": TARGET_ID, "control_id": "robustness", "reason": "r", "owner": "o", "expires_at": FUTURE}
+    headers = {"Origin": "http://testserver"}
+    # Attacker knows the nonce (they set it) but not the HttpOnly session value.
+    assert client.post("/ui/waivers", data={**payload, "csrf_token": nonce}, headers=headers).status_code == 403
+    # With a session, a POST carrying neither Origin nor Sec-Fetch-Site is refused (no browser omits both).
+    assert client.post("/ui/waivers", data={**payload, "csrf_token": embedded}).status_code == 403
+    ok = client.post("/ui/waivers", data={**payload, "csrf_token": embedded}, headers=headers, follow_redirects=False)
+    assert ok.status_code == 303
+    also_ok = client.post(
+        f"/ui/waivers/{rich_bundle.orchestrator.list_waivers()[0]['waiver_id']}/revoke",
+        data={"csrf_token": embedded},
+        headers={"Sec-Fetch-Site": "same-origin"},
+        follow_redirects=False,
+    )
+    assert also_ok.status_code == 303
+
+
+def test_csrf_token_never_travels_in_the_preview_url(rich_bundle: Bundle):
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    run_id = rich_bundle.run_id
+    page = client.get("/ui/waivers/new", params={"run_id": run_id, "finding_id": f"{run_id}:{TARGET_ID}:promptfoo:test:0"})
+    trigger = __import__("re").search(r'<div class="preview-source"([^>]*)>', page.text).group(1)
+    assert 'hx-include="[name=\'target_id\'],[name=\'control_id\']"' in trigger
+    assert "closest form" not in trigger
+
+
+def test_read_form_rejects_oversized_bodies_by_content_length(rich_bundle: Bundle):
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    huge = client.post(
+        "/ui/waivers",
+        content=b"a=b",
+        headers={"content-type": "application/x-www-form-urlencoded", "content-length": str(10 * 1024 * 1024)},
+    )
+    assert huge.status_code == 413
 
 
 def test_ui_gate_fragment_reflects_eval_min_pass_rate(rich_bundle: Bundle):

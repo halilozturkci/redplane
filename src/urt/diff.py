@@ -8,6 +8,7 @@ counts and max severity per key are kept so a change in either is visible.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -27,6 +28,28 @@ SCORECARD_DELTA_KEYS = (
     "asr_overall",
     "eval_pass_rate",
 )
+
+
+_NAME_DATE_SUFFIX = re.compile(r"[-_]\d{8}(?:[-_T]\d{4,6})?$")
+
+
+def name_prefix(name: str) -> str:
+    """Run-name prefix per the `<agent>-<engine>-real-<date>` convention (date suffix stripped)."""
+    return _NAME_DATE_SUFFIX.sub("", str(name or ""))
+
+
+def comparable(run_a: dict[str, Any], run_b: dict[str, Any]) -> bool:
+    """§4.5: two runs are worth diffing when they share a target or a name prefix."""
+    targets_a = {str(t) for t in run_a.get("targets") or []}
+    targets_b = {str(t) for t in run_b.get("targets") or []}
+    if targets_a & targets_b:
+        return True
+    prefix_a, prefix_b = name_prefix(str(run_a.get("name", ""))), name_prefix(str(run_b.get("name", "")))
+    return bool(prefix_a) and prefix_a == prefix_b
+
+
+def comparable_runs(rows: list[dict[str, Any]], anchor: dict[str, Any]) -> list[dict[str, Any]]:
+    return [row for row in rows if row.get("run_id") != anchor.get("run_id") and comparable(anchor, row)]
 
 
 def finding_identity(finding: UnifiedFinding | dict[str, Any]) -> str:

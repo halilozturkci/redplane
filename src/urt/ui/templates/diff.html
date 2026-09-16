@@ -11,14 +11,21 @@
       {% for row in runs %}<option value="{{ row.run_id }}"{% if row.run_id == a %} selected{% endif %}>{{ row.name }} · {{ row.created_at }}</option>{% endfor %}
     </select>
   </label>
-  <label>B (comparison)
+  <label>B (comparison — same target or same name prefix as A)
     <select name="b">
+      {% if a %}
       <option value="">choose…</option>
-      {% for row in runs %}<option value="{{ row.run_id }}"{% if row.run_id == b %} selected{% endif %}>{{ row.name }} · {{ row.created_at }}</option>{% endfor %}
+      {% for row in candidates %}<option value="{{ row.run_id }}"{% if row.run_id == b %} selected{% endif %}>{{ row.name }} · {{ row.created_at }} · {{ (row.targets or []) | join(", ") }}</option>{% endfor %}
+      {% else %}
+      <option value="">choose A first</option>
+      {% endif %}
     </select>
   </label>
-  <button type="submit">Compare</button>
+  <button type="submit">{% if a and not b %}Pick A{% else %}Compare{% endif %}</button>
 </form>
+{% if unrelated %}
+<div class="banner">These two runs share no target and no name prefix; the comparison is shown because you asked for it, but new/resolved will mostly reflect different scopes rather than change.</div>
+{% endif %}
 {% if diff %}
 <div class="meta">
   <span><strong>A:</strong> <a href="/ui/runs/{{ diff.run_a }}" class="mono">{{ diff.run_a }}</a></span>
