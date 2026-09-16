@@ -437,10 +437,10 @@ class Orchestrator:
                 "engine_invocation_count": len(engine_invocations),
                 "finding_count": len(normalized),
                 "budget": budget.snapshot(),
-                # Gateway traces this run produced (idea 3): exact `run_id` tags plus the
-                # weaker time-window join, each listed under its own key.
+                # Gateway traces this run produced (idea 3). `trace_ids` = exact `run_id`
+                # tags only; the weaker time-window join stays labelled inside `gateway_traces`.
                 "gateway_traces": gateway_link,
-                "trace_ids": gateway_link["trace_ids"],
+                "trace_ids": gateway_link["by_run_id"],
                 "report_paths": {
                     "markdown": str(run_root / "report.md"),
                     "html": str(run_root / "report.html"),
@@ -505,7 +505,7 @@ class Orchestrator:
                     "engine_invocations": engine_invocations,
                     "budget": budget.snapshot(),
                     "gateway_traces": gateway_link,
-                    "trace_ids": gateway_link["trace_ids"],
+                    "trace_ids": gateway_link["by_run_id"],
                 },
             )
             self._write_failure_reports(run_id, store)
@@ -603,8 +603,14 @@ class Orchestrator:
         manifest = self.artifact_store.read_json(run_id, "run_manifest.json") or {}
         link = manifest.get("gateway_traces") if isinstance(manifest.get("gateway_traces"), dict) else None
         if link is None:
-            link = {"trace_root": str(self.gateway_traces.root), "window": None, "by_run_id": [], "by_time_window": [], "trace_ids": []}
-        return {"run_id": run_id, **link, "traces": self.gateway_traces.summaries_for(link)}
+            link = {"window": None, "by_run_id": [], "by_time_window": [], "all_trace_ids": []}
+        return {
+            "run_id": run_id,
+            "trace_root": str(self.gateway_traces.root),
+            **link,
+            "trace_ids": list(link.get("by_run_id") or []),
+            "traces": self.gateway_traces.summaries_for(link),
+        }
 
     def stage_events(self, run_id: str) -> list[dict[str, Any]] | None:
         """Orchestrator stage events so far; None for an unknown run, [] before it starts."""

@@ -13,15 +13,17 @@
 <h2>Traces linked to run <span class="mono">{{ linked.run_id }}</span></h2>
 <p class="note">
   From <code>run_manifest.json</code> <code>gateway_traces</code>: <strong>run_id</strong> = the attack tool forwarded
-  <code>X-URT-Run-Id</code> (exact); <strong>time_window</strong> = an untagged request inside the run's
-  {% if linked.window %}window {{ linked.window.from }} → {{ linked.window.to }}{% else %}window{% endif %} (weaker join).
+  <code>X-URT-Run-Id</code> ({{ linked.by_run_id | length }} exact, as tagged by the tool — these are the manifest's <code>trace_ids</code>);
+  <strong>time_window</strong> = an untagged request inside the run's
+  {% if linked.window %}window {{ linked.window.from }} → {{ linked.window.to }}{% else %}window{% endif %}
+  ({{ linked.by_time_window | length }}, weaker join: a concurrent run or a manual request through the same gateway lands here too).
   <a href="/ui/runs/{{ linked.run_id | urlencode }}">Back to the run</a>.
 </p>
 {% if linked.traces %}
 {% set rows = linked.traces %}
 {% include "partials/_trace_rows.html" %}
 {% else %}
-<p class="muted">No gateway traces are linked to this run{% if not linked.window %} (the manifest is not written yet){% endif %}.</p>
+<p class="muted">No gateway traces are linked to this run{% if not linked.window %} (the run has no completed or failed manifest with a trace link, e.g. it was interrupted){% endif %}.</p>
 {% endif %}
 {% endif %}
 
