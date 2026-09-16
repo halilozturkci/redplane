@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .auth import API_KEY_ENV, api_key_from_env
+from .auth import API_KEY_ENV, WeakApiKeyError, api_key_from_env, check_api_key_strength
 from .config import dump_run_spec, load_run_spec
 from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
 from .diff import render_diff_text
@@ -397,6 +397,12 @@ def cmd_view(args: argparse.Namespace) -> int:
 
 def cmd_serve_api(args: argparse.Namespace) -> int:
     api_key = api_key_from_env()
+    if api_key:
+        try:
+            check_api_key_strength(api_key)
+        except WeakApiKeyError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
     if not is_loopback_host(args.host) and not api_key and not args.unsafe_allow_unauthenticated:
         print(
             f"Error: refusing to bind {args.host!r} without authentication. Set {API_KEY_ENV} (a single "

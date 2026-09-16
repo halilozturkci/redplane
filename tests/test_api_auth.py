@@ -13,9 +13,15 @@ from conftest import Bundle
 from fastapi.testclient import TestClient
 
 from urt.api import create_app
-from urt.auth import SESSION_COOKIE, session_token
+from urt import auth
+from urt.auth import SESSION_COOKIE, issue_session_token, session_is_valid
 
 KEY = "correct-horse-battery-staple"
+
+
+@pytest.fixture(autouse=True)
+def _no_failure_delay(monkeypatch):
+    monkeypatch.setattr(auth, "FAILED_AUTH_DELAY_SECONDS", 0.0)
 
 
 @pytest.fixture
@@ -65,7 +71,8 @@ def test_ui_login_sets_httponly_cookie_and_protects_pages(client: TestClient, ri
     set_cookie = good.headers["set-cookie"]
     assert "HttpOnly" in set_cookie and "SameSite=strict" in set_cookie.replace("Strict", "strict")
     assert KEY not in set_cookie  # the cookie is a derived token, not the key
-    assert client.cookies.get(SESSION_COOKIE) == session_token(KEY)
+    assert "Max-Age=" in set_cookie
+    assert session_is_valid(client.cookies.get(SESSION_COOKIE), KEY)
 
     assert client.get("/ui").status_code == 200
     assert client.get(f"/ui/runs/{rich_bundle.run_id}").status_code == 200
@@ -74,7 +81,11 @@ def test_ui_login_sets_httponly_cookie_and_protects_pages(client: TestClient, ri
     assert client.post("/v1/waivers", json={"target_id": "t"}).status_code == 401
     assert client.patch("/v1/waivers/x", json={"revoke": True}).status_code == 401
 
-    logout = client.post("/ui/logout", data={"csrf_token": token}, follow_redirects=False)
+    # With a session the CSRF token is session-bound; the pre-login token is no longer valid.
+    assert client.post("/ui/logout", data={"csrf_token": token}).status_code == 403
+    bound = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui").text).group(1)
+    assert bound != token
+    logout = client.post("/ui/logout", data={"csrf_token": bound}, headers={"Origin": "http://testserver"}, follow_redirects=False)
     assert logout.status_code == 303
     assert client.get("/ui", follow_redirects=False).status_code == 303
 
@@ -82,8 +93,72 @@ def test_ui_login_sets_httponly_cookie_and_protects_pages(client: TestClient, ri
 def test_forged_session_cookie_is_rejected(client: TestClient):
     client.cookies.set(SESSION_COOKIE, "0" * 64)
     assert client.get("/ui", follow_redirects=False).status_code == 303
-    client.cookies.set(SESSION_COOKIE, session_token("wrong-key"))
+    client.cookies.set(SESSION_COOKIE, issue_session_token("wrong-key-but-long-enough"))
     assert client.get("/v1/runs").status_code == 401
+
+
+def test_session_tokens_rotate_expire_and_die_with_the_process(monkeypatch):
+    """The cookie is HMAC(key + per-process secret, issued-at): two logins differ, a restart
+    invalidates every outstanding cookie, and `max_age` bounds a captured one."""
+    first, second = issue_session_token(KEY), issue_session_token(KEY)
+    assert first != second
+    assert session_is_valid(first, KEY) and session_is_valid(second, KEY)
+    assert not session_is_valid(first, "another-key-of-good-length")
+    assert not session_is_valid(first + "0", KEY)
+    assert not session_is_valid("", KEY)
+
+    old = issue_session_token(KEY, now=1_000_000)
+    assert session_is_valid(old, KEY, now=1_000_000 + auth.SESSION_MAX_AGE_SECONDS - 1)
+    assert not session_is_valid(old, KEY, now=1_000_000 + auth.SESSION_MAX_AGE_SECONDS + 1)
+    assert not session_is_valid(old, KEY, now=999_000)  # issued in the future
+
+    monkeypatch.setattr(auth, "_PROCESS_SECRET", b"restarted-process-secret-value!!")
+    assert not session_is_valid(first, KEY)
+
+
+def test_weak_keys_are_refused_at_startup(rich_bundle: Bundle, monkeypatch, capsys):
+    import sys
+
+    import urt.cli as cli
+
+    with pytest.raises(ValueError, match="at least 16"):
+        create_app(rich_bundle.orchestrator, api_key="short")
+    monkeypatch.setenv("URT_API_KEY", "k")
+    with pytest.raises(ValueError):
+        create_app(rich_bundle.orchestrator)
+
+    calls: list[dict] = []
+    fake_uvicorn = type("U", (), {"run": staticmethod(lambda *a, **kw: calls.append(kw))})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    assert cli.main(["serve-api", "--host", "0.0.0.0"]) == 2
+    err = capsys.readouterr().err
+    assert "at least 16" in err and "openssl rand -hex 32" in err
+    assert calls == []
+
+
+def test_failed_authentication_is_delayed(rich_bundle: Bundle, monkeypatch):
+    import time
+
+    monkeypatch.setattr(auth, "FAILED_AUTH_DELAY_SECONDS", 0.3)
+    client = TestClient(create_app(rich_bundle.orchestrator, api_key=KEY))
+
+    started = time.perf_counter()
+    assert client.get("/v1/runs", headers={"Authorization": "Bearer wrong-wrong-wrong"}).status_code == 401
+    assert time.perf_counter() - started >= 0.3
+
+    started = time.perf_counter()
+    assert client.get("/v1/runs", headers={"Authorization": f"Bearer {KEY}"}).status_code == 200
+    assert time.perf_counter() - started < 0.3
+
+    # Anonymous requests (no credential offered) are not delayed: nothing to brute-force.
+    started = time.perf_counter()
+    assert client.get("/ui", follow_redirects=False).status_code == 303
+    assert time.perf_counter() - started < 0.3
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/login").text).group(1)
+    started = time.perf_counter()
+    assert client.post("/ui/login", data={"api_key": "nope-nope-nope", "csrf_token": token}).status_code == 401
+    assert time.perf_counter() - started >= 0.3
 
 
 def test_without_a_key_nothing_is_gated_and_login_says_so(rich_bundle: Bundle, monkeypatch):

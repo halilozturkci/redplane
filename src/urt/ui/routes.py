@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from ..auth import SESSION_COOKIE, clear_session_cookie, safe_next, set_session_cookie
+from ..auth import SESSION_COOKIE, clear_session_cookie, failed_auth_delay, key_matches, safe_next, set_session_cookie
 from ..constants import SEVERITY_ORDER, WAIVER_DEFAULT_EXPIRY_DAYS
 from ..diff import comparable, comparable_runs
 from ..orchestrator import Orchestrator
@@ -208,8 +208,8 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         target = safe_next(fields.get("next"))
         if not key:
             return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
-        submitted = fields.get("api_key", "")
-        if not submitted or not hmac.compare_digest(submitted, key):
+        if not key_matches(fields.get("api_key"), key):
+            await failed_auth_delay()
             return page(
                 "login.html", request, status_code=401, key_configured=True, next=target, error="Wrong API key."
             )
