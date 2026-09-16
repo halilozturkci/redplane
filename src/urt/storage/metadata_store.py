@@ -13,6 +13,14 @@ from ..constants import SEVERITY_ORDER
 from ..types import RunRecord, UnifiedFinding, WaiverRecord
 
 
+class WaiverExistsError(ValueError):
+    """A waiver with this id already exists; waivers are append-only and never rewritten."""
+
+
+class WaiverRevokedError(ValueError):
+    """The waiver has been revoked; revoke is terminal (extend = create a new waiver)."""
+
+
 class MetadataStore:
     """Persist URT metadata in sqlite (local/dev default)."""
 
@@ -219,9 +227,14 @@ class MetadataStore:
             previous = conn.execute(
                 "SELECT expires_at FROM waivers WHERE waiver_id = ?", (payload["waiver_id"],)
             ).fetchone()
+            if previous is not None:
+                raise WaiverExistsError(
+                    f"waiver {payload['waiver_id']!r} already exists; waivers are append-only "
+                    "(revoke it and create a new one instead of rewriting it)"
+                )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO waivers (
+                INSERT INTO waivers (
                     waiver_id, target_id, control_id, reason, owner, expires_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
@@ -237,8 +250,8 @@ class MetadataStore:
             self._record_waiver_event(
                 conn,
                 waiver_id=payload["waiver_id"],
-                event="created" if previous is None else "replaced",
-                expires_at_before=None if previous is None else previous["expires_at"],
+                event="created",
+                expires_at_before=None,
                 expires_at_after=payload["expires_at"],
                 note=None,
             )
@@ -280,7 +293,8 @@ class MetadataStore:
         """Change only `expires_at` (revoke = set it to now) and append an audit event.
 
         Waivers are never deleted: the row and its history stay readable. Returns the
-        updated row, or None when the waiver does not exist.
+        updated row, or None when the waiver does not exist. Revoke is terminal: once
+        a `revoked` event exists no further change is accepted (`WaiverRevokedError`).
         """
         with self._connect() as conn:
             current = conn.execute(
@@ -288,6 +302,14 @@ class MetadataStore:
             ).fetchone()
             if current is None:
                 return None
+            revoked = conn.execute(
+                "SELECT 1 FROM waiver_events WHERE waiver_id = ? AND event = 'revoked' LIMIT 1", (waiver_id,)
+            ).fetchone()
+            if revoked is not None:
+                raise WaiverRevokedError(
+                    f"waiver {waiver_id!r} is revoked; revoke is terminal — create a new waiver "
+                    "with a fresh reason and owner instead"
+                )
             conn.execute("UPDATE waivers SET expires_at = ? WHERE waiver_id = ?", (expires_at, waiver_id))
             self._record_waiver_event(
                 conn,

@@ -18,6 +18,7 @@ from .orchestrator import Orchestrator
 from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
 from .specs import probe_spec
 from .storage.artifact_store import ArtifactPathError, ArtifactStore
+from .storage.metadata_store import WaiverExistsError
 from .report import (
     GateResult,
     gate_result,
@@ -342,7 +343,11 @@ def cmd_waivers_create(args: argparse.Namespace) -> int:
         "owner": args.owner,
         "expires_at": args.expires_at,
     }
-    created = orchestrator.create_waiver(payload)
+    try:
+        created = orchestrator.create_waiver(payload)
+    except WaiverExistsError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(created, indent=2, ensure_ascii=False))
     return 0
 

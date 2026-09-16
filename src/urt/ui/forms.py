@@ -18,6 +18,10 @@ MAX_FORM_BYTES = 64 * 1024
 
 async def read_form(request: Request) -> dict[str, str]:
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_FORM_BYTES:
+        # Refuse before reading: the body is never buffered for an oversized post.
+        raise HTTPException(status_code=413, detail="Form body too large")
     body = await request.body()
     if not content_type and not body:
         return {}
