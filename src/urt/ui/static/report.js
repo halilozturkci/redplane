@@ -109,6 +109,7 @@
       if (node) { node.open = true; node.scrollIntoView(); }
     }
     applyFilters();
+    document.body.classList.add("js-ready");
   }
 
   if (document.readyState === "loading") {

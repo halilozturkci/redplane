@@ -83,6 +83,7 @@ Both faces express the same principle: **Redplane commands the tools that attack
 
 **Auditability**
 - Full per-run audit bundle: resolved spec, run manifest, engine invocations, raw tool logs, normalized findings, scorecard, and Markdown/HTML/CSV reports.
+- `report.html` is a self-contained viewer (scorecard tiles, gate verdict with blocking/waived lists, faceted findings with transcripts, framework matrix, bundle file list with sha256) that opens from disk or a CI artifact with no server; `urt view <run_id>` serves one run directory on loopback.
 - SQLite metadata store for cross-run history and queries.
 
 **Access & integration**
@@ -202,7 +203,8 @@ That is all you need to install dependencies, run the test suite, execute a run 
 │   ├── api.py                     # FastAPI control-plane
 │   ├── types.py                   # RunSpec, UnifiedFinding, EvalScore, …
 │   ├── constants.py               # SUPPORTED_TARGETS / ENGINES / EVALUATORS
-│   ├── report.py                  # Markdown / HTML / CSV renderers + gate
+│   ├── report.py                  # Markdown / CSV renderers + gate (GateResult)
+│   ├── ui/                        # bundle reader, Jinja2 templates, static viewer, urt view server
 │   ├── adapters/
 │   │   ├── targets/               # http, copilot, foundry
 │   │   ├── engines/               # pyrit, promptfoo, garak, powerpwn, …
@@ -281,6 +283,8 @@ uv run urt artifacts --run-id <RUN_ID>
 uv run urt waivers create --target-id <TARGET> --control-id LLM01:2025 --reason "accepted risk" --owner secops --expires-at 2027-01-01T00:00:00+00:00
 uv run urt waivers list
 uv run urt report --run-id <RUN_ID> --output-dir ./reports/<RUN_ID>
+uv run urt report --run-id <RUN_ID> --in-place            # refresh report.html (waiver state) inside the run dir
+uv run urt view <RUN_ID> --port 8765                       # loopback viewer for one run directory
 uv run urt gate --run-id <RUN_ID> --threshold high
 uv run urt gate --run-id <RUN_ID> --threshold high --explain   # list blocking + waived findings
 uv run urt serve-api --host 127.0.0.1 --port 8000
@@ -1240,6 +1244,32 @@ Raw engine logs/artifacts:
 - `raw/<engine>/<target_id>_stdout.log`
 - `raw/<engine>/<target_id>_stderr.log`
 - optional parsed tool outputs (for engines with `output_json` / `report_jsonl`)
+
+### `report.html`: the self-contained viewer
+
+`report.html` embeds the redacted bundle content and renders it with a few KB of
+inline CSS/JS — no CDN, no fonts, no network, so it opens from a laptop, an
+unzipped CI artifact or `urt view`. Sections:
+
+- **Scorecard** tiles (findings, C/H/M/L/I, ASR, attacks succeeded/total, eval pass rate) and the budget snapshot verbatim (`cost_enforcement: unmetered|unset|enforced`; never an invented USD figure); ASR by category; findings by engine.
+- **Gate**: the verdict at every threshold (`critical` … `info`, profile default preselected) with the **list of blocking findings** and the **list of waived findings with waiver id, control, owner, expiry and reason**. Waivers are those stored when the page was rendered — the run's end, or the last `urt report --in-place`.
+- **Findings**: faceted by severity, engine, category, sub-category, target, success, waived and kind (`attack` / `coverage_gap` / `execution` / `eval`, derived), with free-text search. Each finding expands to description, confidence, attack vector/complexity, framework chips, repro steps, evidence links (bundle-relative: `raw/<engine>/<target>_stdout.log`), a per-engine **transcript** (Promptfoo/Garak/DeepTeam `metadata.raw`, PyRIT `metadata.conversation_preview`) rendered as text, and the raw metadata JSON. Raw metadata over 4 KB is truncated with a link to `findings.json`.
+- **Framework coverage**: OWASP LLM / OWASP Agentic / MITRE ATLAS controls × targets with count and max severity, plus an `unmapped` row. Labelled as category-level heuristics, not per-test verdicts.
+- **Evaluation Results**, **Execution** (target probes, engine invocation timeline with `fail_open`, evaluator summaries), **Audit bundle** (every file with size and sha256 from `artifacts_index.json`; the page cannot list its own final hash), and the **redacted resolved spec**. Failed runs show the manifest error and the head of `run_error.log`; no counts are invented when there is no scorecard.
+
+Security posture of the page: every value is autoescaped (findings and model
+output are attacker-controlled text; transcripts render in `<pre>`), data is
+embedded as an inert `application/json` block, and a `Content-Security-Policy`
+meta pins the page's own inline script and stylesheet by sha256 — no
+`'unsafe-inline'`, so nothing injected can execute. Pre-1.1 bundles are
+redacted at read time and the page says so in a banner.
+
+`urt view <run_id>` serves the run directory at `http://127.0.0.1:8765/`
+(`/` is `report.html`) with the API's artifact rules: paths are confined to the
+run directory, text files are inline with `nosniff` + `default-src 'none'; sandbox`,
+everything else is an attachment, and for pre-1.1 bundles only the allowlisted
+aggregates are served (`409` otherwise). It binds loopback only; there is no flag
+to change that — use an SSH tunnel.
 
 `findings.json` record shape:
 
