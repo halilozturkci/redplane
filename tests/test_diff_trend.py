@@ -152,6 +152,50 @@ def test_trend_api_lists_points_per_target_oldest_first(rich_bundle: Bundle):
     assert client.get("/v1/targets/unknown-target/trend").status_code == 404
 
 
+def test_name_prefix_strips_the_date_suffix_of_the_naming_convention():
+    from urt.diff import name_prefix
+
+    assert name_prefix("mcs-agent-garak-real-20260916") == "mcs-agent-garak-real"
+    assert name_prefix("mcs-agent-garak-real-20260916-143000") == "mcs-agent-garak-real"
+    assert name_prefix("foundry-copilot-smoke") == "foundry-copilot-smoke"
+    assert name_prefix("") == ""
+
+
+def test_ui_diff_picker_is_scoped_to_same_target_or_name_prefix(rich_bundle: Bundle):
+    """§4.5: pick two runs of the same target or the same name prefix; unrelated runs are not offered."""
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    a, b = rich_bundle.run_id, _second_run(rich_bundle)
+    same_prefix_other_target = rich_bundle.orchestrator.execute(RunSpec.from_dict({
+        **bundle_spec("mcs-agent-garak-real-20260930"),
+        "targets": [{"id": "staging-agent", "type": "http", "endpoint": "http://localhost:9999/x", "config": {"skip_healthcheck": True}}],
+    }))["run_id"]
+    unrelated = rich_bundle.orchestrator.execute(RunSpec.from_dict({
+        **bundle_spec("other-thing"),
+        "targets": [{"id": "other-agent", "type": "http", "endpoint": "http://localhost:9999/x", "config": {"skip_healthcheck": True}}],
+    }))["run_id"]
+
+    # No A yet: A offers everything, B offers nothing until A is chosen.
+    picker = client.get("/ui/diff").text
+    a_options = re.search(r'<select name="a">(.*?)</select>', picker, flags=re.S).group(1)
+    b_options = re.search(r'<select name="b">(.*?)</select>', picker, flags=re.S).group(1)
+    assert all(f'value="{r}"' in a_options for r in (a, b, same_prefix_other_target, unrelated))
+    assert "choose A first" in b_options and f'value="{b}"' not in b_options
+
+    scoped = client.get("/ui/diff", params={"a": a}).text
+    b_options = re.search(r'<select name="b">(.*?)</select>', scoped, flags=re.S).group(1)
+    assert f'value="{b}"' in b_options  # same target
+    assert f'value="{same_prefix_other_target}"' in b_options  # same name prefix
+    assert f'value="{unrelated}"' not in b_options
+    assert f'value="{a}"' not in b_options  # not itself
+    assert "same target or same name prefix" in scoped
+
+    # Forcing an unrelated pair through the URL still renders, but says so.
+    forced = client.get("/ui/diff", params={"a": a, "b": unrelated})
+    assert forced.status_code == 200
+    assert "share no target and no name prefix" in forced.text
+    assert "share no target" not in client.get("/ui/diff", params={"a": a, "b": b}).text
+
+
 def test_ui_diff_and_trend_pages(rich_bundle: Bundle):
     client = TestClient(create_app(rich_bundle.orchestrator))
     a, b = rich_bundle.run_id, _second_run(rich_bundle)

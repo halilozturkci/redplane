@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ..constants import SEVERITY_ORDER, WAIVER_DEFAULT_EXPIRY_DAYS
+from ..diff import comparable, comparable_runs
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
 from ..report import parse_eval_min_pass_rate
@@ -162,13 +163,21 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
     @router.get("/diff", response_class=HTMLResponse)
     def diff_page(a: str = Query(default=""), b: str = Query(default="")) -> HTMLResponse:
         diff = None
+        for run_id in (a, b):
+            if run_id and not orch.get_run(run_id):
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
         if a and b:
-            for run_id in (a, b):
-                if not orch.get_run(run_id):
-                    raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             diff = orch.diff(a, b)
-        runs = orch.metadata_store.list_runs()
-        return html(render_template("diff.html", mode="served", runs=runs, a=a, b=b, diff=diff))
+        runs = orch.list_runs()
+        by_id = {row["run_id"]: row for row in runs}
+        anchor = by_id.get(a) if a else None
+        candidates = comparable_runs(runs, anchor) if anchor else []
+        unrelated = bool(anchor and b and b in by_id and not comparable(anchor, by_id[b]))
+        return html(
+            render_template(
+                "diff.html", mode="served", runs=runs, candidates=candidates, a=a, b=b, diff=diff, unrelated=unrelated
+            )
+        )
 
     @router.get("/targets/{target_id}/trend", response_class=HTMLResponse)
     def trend_page(target_id: str) -> HTMLResponse:
