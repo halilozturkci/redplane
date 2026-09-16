@@ -34,5 +34,5 @@
 </table>
 {% endif %}
 {% else %}
-<p class="muted">No scorecard was produced for this run (it did not complete), so no counts or rates are shown.</p>
+<p class="muted">No scorecard {% if status in ("queued", "running") %}yet: the run is {{ status }} (see stage events below){% else %}was produced for this run (it did not complete){% endif %}, so no counts or rates are shown.</p>
 {% endif %}

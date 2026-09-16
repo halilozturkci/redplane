@@ -281,6 +281,10 @@ class RunRecord:
     updated_at: str
     scorecard_path: str | None = None
     findings_path: str | None = None
+    # `<hostname>:<pid>` of the process executing (or queued to execute) the run, so a
+    # later process can tell an interrupted run from one that is still alive.
+    worker_id: str | None = None
+    started_at: str | None = None
 
 
 @dataclass(slots=True)

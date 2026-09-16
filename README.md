@@ -1211,6 +1211,7 @@ Canonical files:
 - `resolved_spec.json`
 - `run_manifest.json`
 - `engine_invocations.json`
+- `stage_events.json` (orchestrator stage events, appended as the run executes)
 - `artifacts_index.json`
 - `findings.json`
 - `scorecard.json`
@@ -1363,10 +1364,11 @@ uv run urt serve-api --host 127.0.0.1 --port 8000
 Endpoints:
 - `GET /healthz`
 - `GET /v1/runs[?gate_threshold=high]` — SQLite row plus bundle-derived fields: `targets`, `engines`, `evaluators`, `engines_executed`, `engines_skipped`, `finding_count`, `severity_counts`, `asr_overall`, `eval_pass_rate`, `duration_seconds`, `bundle_format_version`, `gate` (`threshold`, `ok`, `blocking_count`, `waived_count`; threshold defaults to the run profile's `gate_threshold`). Fields are `null` when the source file does not exist (failed runs), never zero-filled; `error_message` is masked for runs whose bundle predates `1.1` (pre-1.1 error text may carry unscrubbed argv). `urt runs` prints the same rows.
-- `POST /v1/runs`
-- `GET /v1/runs/{run_id}`
+- `POST /v1/runs` — **asynchronous**: validates the spec (`400` on failure, nothing persisted), records the run as `queued`, hands it to the process's single worker thread and answers `202 {"run_id", "status", "location"}` (+ `Location` header). Poll `GET /v1/runs/{run_id}`. `?wait=true` executes inside the request instead (`200` completed / `500` failed payload) for scripts and tests; see "Async runs" below
+- `GET /v1/runs/{run_id}` — the SQLite row plus lifecycle fields: `status` (`queued` → `running` → `completed` | `failed`), `terminal`, `started_at`, `worker_id` (`<host>:<pid>` of the executing process), `stale` (a `queued`/`running` row whose worker process is gone), `stage_event_count`
+- `GET /v1/runs/{run_id}/stages` — orchestrator **stage events** so far (`[]` before the run starts): `{at, stage, status, target_id?, engine?|evaluator?, message?, …}` for `run` started/completed/failed, `target` healthcheck ok/failed, `engine` / `evaluator` started then `completed|skipped|failed` per target, `normalize`. Discrete stages, not a progress fraction
 - `GET /v1/runs/{run_id}/findings` — sorted by severity rank (`SEVERITY_ORDER`), not lexically; each finding carries `evidence_artifacts` (bundle-relative form of the absolute `evidence_refs`, `null` for refs outside the run directory)
-- `GET /v1/runs/{run_id}/scorecard` · `/summary` · `/manifest` · `/invocations` — content of `scorecard.json`, `run_summary.json`, `run_manifest.json`, `engine_invocations.json`; `404` when the file is absent. These and `/findings` apply the key/position redaction rules **at read time** as well, so bundles written before `1.1` are served with credentials masked
+- `GET /v1/runs/{run_id}/scorecard` · `/summary` · `/manifest` · `/invocations` — content of `scorecard.json`, `run_summary.json`, `run_manifest.json`, `engine_invocations.json` (rewritten after every engine, so a running or failed run already shows the invocations so far); `404` when the file is absent. These and `/findings` apply the key/position redaction rules **at read time** as well, so bundles written before `1.1` are served with credentials masked
 - `GET /v1/runs/{run_id}/artifacts` — `artifacts_index.json` (`path`, `size_bytes`, `sha256`)
 - `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file, served raw. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: no-store`; HTML and unknown types are `Content-Disposition: attachment`. For bundles older than `1.1` only `scorecard.json`, `artifacts_index.json` and `report.md/html/csv` are served raw; every other file answers `409` (spec, manifest, findings, summaries, sidecars and raw tool logs may hold expanded credentials); use the redacting JSON endpoints above instead, which for such bundles also mask `metadata.env_overrides` dicts, `command` argv and the free-text `error` / `error_message` strings by position
 - `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256. `409` for bundles older than `1.1`
@@ -1391,8 +1393,8 @@ as `report.html`, with [htmx 2.0.10](src/urt/ui/static/VENDOR.md) vendored (no
 CDN, no Node build). Every page works without JavaScript; htmx only swaps
 fragments in place.
 
-- `GET /ui[?target=&name_prefix=&gate_threshold=]` — runs list, newest first: name, profile, status (with last update for `running`), created, duration, targets, engines executed / skipped, critical and high counts, ASR, eval pass rate, gate verdict at the profile default or the chosen threshold.
-- `GET /ui/runs/{run_id}[?threshold=&ignore_waivers=&eval_min_pass_rate=]` — run detail: scorecard tiles and budget snapshot, gate panel (threshold selector, ignore-waivers toggle, optional minimum eval pass rate, blocking and waived lists), framework coverage, evaluation results, probes, engine invocations, evaluator summaries, bundle files with sha256 linked through `/v1/runs/{id}/artifacts/…`, redacted resolved spec, links to `report.html` and the zip.
+- `GET /ui[?target=&name_prefix=&gate_threshold=]` — runs list, newest first: name, profile, status (`queued` / `running` rows show their last update and stage-event count, and a **stale** badge when the worker process is gone), created, duration, targets, engines executed / skipped, critical and high counts, ASR, eval pass rate, gate verdict at the profile default or the chosen threshold.
+- `GET /ui/runs/{run_id}[?threshold=&ignore_waivers=&eval_min_pass_rate=]` — run detail: scorecard tiles and budget snapshot, gate panel (threshold selector, ignore-waivers toggle, optional minimum eval pass rate, blocking and waived lists), framework coverage, evaluation results, **stage events**, probes, engine invocations, evaluator summaries, bundle files with sha256 linked through `/v1/runs/{id}/artifacts/…`, redacted resolved spec, links to `report.html` and the zip. A `queued` / `running` run renders from its SQLite row before the bundle exists; its stage-event list (`/ui/runs/{id}/progress` fragment) is re-fetched by htmx every 3 s **only while the run is not terminal** (`hx-trigger="every 3s"` is emitted only then), and the first poll after completion carries `HX-Refresh` so the page reloads with the scorecard. Stage events are discrete ("engine garak on mcs-agent started"), never a percentage bar or a token stream.
 - `GET /ui/diff?a=&b=` — pick two runs (B is offered only among runs sharing a target or the `<agent>-<engine>-real-` name prefix with A; an unrelated pair forced through the URL is shown with a warning): side-by-side scorecard with deltas, ASR-by-category deltas, new / resolved / persisting finding groups (linked into each run's explorer), evaluation metric deltas. Runs list rows link here ("compare…").
 - `GET /ui/targets/{target_id}/trend` — per-target trend table with inline-SVG sparklines (ASR, critical+high, run-level eval pass rate; no chart library, no inline styles) and "diff vs previous" links. Target names in the runs list link here.
 - `GET /ui/specs[?template=]` — spec builder: template list with smoke / real badges, a form generated from `constants` (profile with its budget/timeout defaults, evidence level, one target with `${VAR}`-only auth modes, engines with optional `params.command`, evaluators, policy profiles) and a YAML editor that round-trips with it (`POST /ui/specs/build`, `POST /ui/specs/load`). **Validate** (`POST /ui/specs/validate`) shows errors inline, whether each referenced variable is set (boolean), the profile defaults and the redacted resolved spec; **Probe targets** (`POST /ui/specs/probe`) runs the healthchecks. There is no Run button (async runs are tracked in #18).
@@ -1435,17 +1437,53 @@ must be same-origin, and with a session a post carrying neither `Origin` nor
 otherwise), and the JSON API only parses `application/json`, so a cross-site HTML
 form cannot reach either.
 
-`POST /v1/runs` is **synchronous**: the HTTP request blocks until the orchestrator
-returns. The only upper bound is the spec's `budget.max_duration_seconds` (profile
-defaults: `pr_gate` 900 s, `nightly` 3600 s, `weekly_deep` 14400 s), so HTTP clients,
-reverse proxies and uvicorn timeouts must be set above that or the caller will time
-out while the run keeps going and still lands in `GET /v1/runs`. Response contract:
-`400` when the spec fails `RunSpec.from_dict` validation (nothing is persisted),
-`500` with the failed run payload (`run_id`, `error`, `error_log_path`) when execution
-fails after the run was recorded, `200` with the completed run payload otherwise. For
-long runs prefer `urt run` in CI. An async job queue is tracked in
-[#18](https://github.com/halilozturkci/redplane/issues/18). Contract tests:
-`tests/test_api.py`.
+### Async runs
+
+`POST /v1/runs` returns `202` at once and the run executes in the background
+([#18](https://github.com/halilozturkci/redplane/issues/18)). The design is
+deliberately small and local-first:
+
+- **One worker thread per `serve-api` process** (`src/urt/jobs.py`), draining an
+  in-memory FIFO in submission order. No Redis, no separate worker process, no
+  concurrency: one run at a time, which is also what a laptop and a rate-limited
+  target want.
+- **SQLite is the only shared state.** `runs.status` moves `queued` → `running` →
+  `completed` | `failed`; `worker_id` records `<hostname>:<pid>` of the process
+  that owns the run, `started_at` when it began.
+- **The same `Orchestrator.execute`** runs the queued spec that `urt run` uses —
+  there is no second execution path. The queued `RunSpec` (credentials included)
+  lives only in the worker's memory; nothing about a queued run is written to disk
+  until it starts.
+- **Progress is observable on disk and over HTTP**: `stage_events.json` and
+  `engine_invocations.json` are rewritten (atomically) after every stage, and
+  `GET /v1/runs/{id}` / `/stages` read them. Stages are discrete events — engine X
+  on target Y started / completed — never a percentage: the orchestrator has no
+  total unit of work, and the gateway SSE shim is not a token stream.
+- **Stopping `serve-api` stops the attack.** Engine and evaluator tools run in their
+  own process group (`runtime.run_tool_process`, `start_new_session=True`). On a graceful
+  shutdown the worker starts nothing more (still-queued rows are marked
+  `failed: interrupted … queued`), asks the run in flight to stop at its next stage
+  boundary and kills the tool's whole process group — the tool, `uvx`, Node workers,
+  everything it spawned — so nothing keeps hitting the target re-parented to PID 1 with
+  no audit trail. The run is recorded `failed: interrupted … running` with its partial
+  bundle. The same group kill applies on an engine timeout and on Ctrl-C in `urt run`.
+- **Crash recovery, not resumption.** When a control-plane process starts it marks
+  every `queued`/`running` row whose worker process is gone (same host, dead pid; or
+  unknowable and untouched for 24 h) as `failed` with an explicit `interrupted:` message,
+  writes a failed manifest and `run_error.log` if the run never got that far, and
+  leaves the partial bundle in place. It never re-executes: that would produce a
+  second bundle for the same submission. A run that `urt run` is executing in another
+  live process is left alone. `GET /v1/runs` flags such rows `stale: true` before the
+  restart happens.
+- **`?wait=true`** keeps the previous synchronous contract for scripts and the
+  contract tests (`tests/test_api.py`): the request blocks until the run returns,
+  bounded only by `budget.max_duration_seconds` (profile defaults `pr_gate` 900 s,
+  `nightly` 3600 s, `weekly_deep` 14400 s), `200` completed / `500` failed payload.
+  Without the flag the response contract is `400` invalid spec, `202` queued.
+- `urt run` is unchanged: synchronous in the CLI process, same bundle, same
+  `stage_events.json`.
+
+Async tests: `tests/test_async_runs.py`, `tests/test_ui_progress.py`.
 
 ## Network Gateway (Multi-Backend OpenAI Bridge)
 
@@ -1524,7 +1562,7 @@ These `RunSpec` / gateway fields are **enforced at runtime** (not schema-only):
 - Invented USD cost when engines do not report it
 - Mapping `URT_ENABLED_SCENARIOS` onto Garak/PyRIT/DeepTeam native CLI flags
 - Turning `pr_gate` / `nightly` / `weekly_deep` into a separate CI planner
-- Async job queue for `POST /v1/runs` (that endpoint is synchronous)
+- A distributed job queue (Redis, Kubernetes, more than one worker) for `POST /v1/runs` — the async path is one thread per `serve-api` process over SQLite, and a crashed process's runs are marked failed, not resumed
 
 ## Troubleshooting
 

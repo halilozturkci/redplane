@@ -133,28 +133,34 @@ class ArtifactStore:
                 files.append(candidate)
         return sorted(files)
 
+    @staticmethod
+    def _atomic_write(path: Path, payload: bytes) -> None:
+        # Progress files (stage events, engine invocations) are rewritten while another
+        # thread or process may be reading them; a rename makes each version whole.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_bytes(payload)
+        os.replace(tmp, path)
+
     def write_json(self, run_id: str, file_name: str, payload: Any) -> str:
         if self.scrubber:
             payload = self.scrubber.scrub(payload)
         path = self.run_dir(run_id) / file_name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        self._atomic_write(path, json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8"))
         return str(path)
 
     def write_text(self, run_id: str, file_name: str, content: str) -> str:
         if self.scrubber:
             content = self.scrubber.scrub_text(content)
         path = self.run_dir(run_id) / file_name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        self._atomic_write(path, content.encode("utf-8"))
         return str(path)
 
     def write_bytes(self, run_id: str, file_name: str, payload: bytes) -> str:
         if self.scrubber:
             payload = self.scrubber.scrub_bytes(payload)
         path = self.run_dir(run_id) / file_name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(payload)
+        self._atomic_write(path, payload)
         return str(path)
 
     def copy_file(self, run_id: str, source_file: str | Path, dest_name: str | None = None) -> str:
@@ -165,8 +171,7 @@ class ArtifactStore:
         if self.scrubber:
             payload = self.scrubber.scrub_bytes(payload)
         dst = self.run_dir(run_id) / (dest_name or src.name)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(payload)
+        self._atomic_write(dst, payload)
         return str(dst)
 
     def list_run_files(self, run_id: str) -> list[Path]:

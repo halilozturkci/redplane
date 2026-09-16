@@ -9,8 +9,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from ..constants import SEVERITY_ORDER
+from ..constants import RUN_STATUSES, SEVERITY_ORDER, TERMINAL_RUN_STATUSES
 from ..types import RunRecord, UnifiedFinding, WaiverRecord
+
+# Columns added after the first release; created lazily on existing databases.
+RUN_COLUMNS_ADDED = {"worker_id": "TEXT", "started_at": "TEXT"}
+RUN_SELECT_COLUMNS = (
+    "run_id, name, profile, status, created_at, updated_at, scorecard_path, findings_path, "
+    "error_message, worker_id, started_at"
+)
 
 
 class WaiverExistsError(ValueError):
@@ -90,10 +97,45 @@ class MetadataStore:
                 );
                 """
             )
+            self._add_missing_columns(conn, "runs", RUN_COLUMNS_ADDED)
+
+    @staticmethod
+    def _add_missing_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        # Databases created before these columns existed keep working: SQLite has no
+        # ADD COLUMN IF NOT EXISTS, so check table_info first.
+        present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, declaration in columns.items():
+            if name not in present:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     @staticmethod
     def _utc_now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def new_record(
+        self,
+        *,
+        run_id: str,
+        name: str,
+        profile: str,
+        status: str,
+        worker_id: str | None = None,
+        started_at: str | None = None,
+    ) -> RunRecord:
+        """A `RunRecord` stamped now; `status` must be one of `RUN_STATUSES`."""
+        if status not in RUN_STATUSES:
+            raise ValueError(f"Unsupported run status {status!r}; expected one of {list(RUN_STATUSES)}")
+        now = self._utc_now()
+        return RunRecord(
+            run_id=run_id,
+            name=name,
+            profile=profile,
+            status=status,
+            created_at=now,
+            updated_at=now,
+            worker_id=worker_id,
+            started_at=started_at,
+        )
 
     def create_run(self, record: RunRecord) -> None:
         with self._connect() as conn:
@@ -101,8 +143,8 @@ class MetadataStore:
                 """
                 INSERT INTO runs (
                     run_id, name, profile, status, created_at, updated_at,
-                    scorecard_path, findings_path, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    scorecard_path, findings_path, error_message, worker_id, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                 """,
                 (
                     record.run_id,
@@ -113,6 +155,8 @@ class MetadataStore:
                     record.updated_at,
                     record.scorecard_path,
                     record.findings_path,
+                    record.worker_id,
+                    record.started_at,
                 ),
             )
 
@@ -125,6 +169,8 @@ class MetadataStore:
         scorecard_path: str | None = None,
         findings_path: str | None = None,
         error_message: str | None = None,
+        worker_id: str | None = None,
+        started_at: str | None = None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -133,11 +179,23 @@ class MetadataStore:
                 SET status = ?, updated_at = ?,
                     scorecard_path = COALESCE(?, scorecard_path),
                     findings_path = COALESCE(?, findings_path),
-                    error_message = COALESCE(?, error_message)
+                    error_message = COALESCE(?, error_message),
+                    worker_id = COALESCE(?, worker_id),
+                    started_at = COALESCE(?, started_at)
                 WHERE run_id = ?
                 """,
-                (status, updated_at, scorecard_path, findings_path, error_message, run_id),
+                (status, updated_at, scorecard_path, findings_path, error_message, worker_id, started_at, run_id),
             )
+
+    def list_unfinished_runs(self) -> list[dict]:
+        """Rows whose status is not terminal (`queued` / `running`), oldest first."""
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {RUN_SELECT_COLUMNS} FROM runs WHERE status NOT IN ({placeholders}) ORDER BY created_at ASC",
+                tuple(sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def insert_findings(self, findings: Iterable[UnifiedFinding]) -> None:
         rows = []
@@ -181,17 +239,12 @@ class MetadataStore:
 
     def list_runs(self) -> list[dict]:
         with self._connect() as conn:
-            data = conn.execute(
-                "SELECT run_id, name, profile, status, created_at, updated_at, scorecard_path, findings_path, error_message FROM runs ORDER BY created_at DESC"
-            ).fetchall()
+            data = conn.execute(f"SELECT {RUN_SELECT_COLUMNS} FROM runs ORDER BY created_at DESC").fetchall()
         return [dict(row) for row in data]
 
     def get_run(self, run_id: str) -> dict | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT run_id, name, profile, status, created_at, updated_at, scorecard_path, findings_path, error_message FROM runs WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()
+            row = conn.execute(f"SELECT {RUN_SELECT_COLUMNS} FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return None if row is None else dict(row)
 
     def get_findings(self, run_id: str) -> list[dict]:
