@@ -26,7 +26,7 @@ from .constants import (
     SEVERITY_ORDER,
 )
 from .normalization import build_scorecard, normalize_findings
-from .redaction import Scrubber, redact_bundle_payload, redact_run_spec_payload
+from .redaction import REDACTED, Scrubber, redact_bundle_payload, redact_run_spec_payload
 from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
@@ -491,7 +491,15 @@ class Orchestrator:
             )
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
-        return self.metadata_store.get_run(run_id)
+        row = self.metadata_store.get_run(run_id)
+        return None if row is None else self._mask_legacy_error(row)
+
+    def _mask_legacy_error(self, row: dict[str, Any]) -> dict[str, Any]:
+        # SQLite `error_message` is free text; pre-1.1 runs wrote it unscrubbed
+        # (`TimeoutExpired` copies the argv). Same rule as the manifest `error`.
+        if row.get("error_message") and not self.bundle_is_redacted(row["run_id"]):
+            return {**row, "error_message": REDACTED}
+        return row
 
     def list_runs(self, *, gate_threshold: str | None = None) -> list[dict[str, Any]]:
         """Run rows enriched from the bundle (targets, engines, counts, ASR, gate summary).
@@ -525,7 +533,7 @@ class Orchestrator:
         executed = sorted({s["engine"] for s in engine_summaries if s.get("status") != "skipped"})
         skipped = sorted({s["engine"] for s in engine_summaries if s.get("status") == "skipped"} - set(executed))
 
-        enriched = dict(row)
+        enriched = self._mask_legacy_error(dict(row))
         enriched.update(
             {
                 "targets": summary.get("targets") or [t.get("target_id") for t in resolved_spec.get("targets", [])],

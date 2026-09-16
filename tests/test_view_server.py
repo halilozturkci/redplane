@@ -94,6 +94,52 @@ def test_only_report_html_renders_inline_other_html_is_an_attachment(rich_bundle
     assert headers["content-security-policy"].startswith("default-src 'none'; script-src 'sha256-")
 
 
+SPOOFED_LEGACY_REPORT = (
+    "<!doctype html><html><head><title>URT Report</title></head><body><h1>URT Report</h1>"
+    "<table><tr><td>"
+    "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'\">"
+    "<script>document.title='pwned-'+location.origin</script>"
+    "</td></tr></table></body></html>"
+)
+
+
+def test_legacy_report_with_attacker_supplied_csp_meta_gets_the_strict_fallback_header(legacy_bundle: Bundle, served):
+    from urt.ui.view_server import LEGACY_REPORT_CSP
+
+    # A pre-Phase-0 report.html (unescaped render_html) carrying attacker text that
+    # includes its own permissive CSP meta inside the body.
+    (legacy_bundle.run_dir / "report.html").write_text(SPOOFED_LEGACY_REPORT, encoding="utf-8")
+    port = served(legacy_bundle)
+
+    status, headers, body = _get(port, "/")
+    assert status == 200
+    assert b"unsafe-inline" in body  # served as-is (allowlisted), but…
+    assert headers["content-security-policy"] == f"{LEGACY_REPORT_CSP}; frame-ancestors 'none'"
+    assert "unsafe-inline" not in headers["content-security-policy"].replace("style-src 'unsafe-inline'", "")
+    assert "script-src" not in headers["content-security-policy"]  # default-src 'none' governs scripts
+
+
+def test_viewer_csp_header_only_trusts_our_own_head_meta():
+    from urt.ui.view_server import LEGACY_REPORT_CSP, viewer_csp_header
+
+    ours = (
+        b"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+        b"script-src 'sha256-AAAA='; style-src 'sha256-BBBB='; base-uri 'none'; form-action 'none'\"></head><body></body></html>"
+    )
+    assert viewer_csp_header(ours) == (
+        "default-src 'none'; script-src 'sha256-AAAA='; style-src 'sha256-BBBB='; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    )
+    fallback = f"{LEGACY_REPORT_CSP}; frame-ancestors 'none'"
+    # Meta in the body (attacker text) is ignored.
+    assert viewer_csp_header(SPOOFED_LEGACY_REPORT.encode()) == fallback
+    # Meta in the head but not in the exact shape the viewer emits is ignored too.
+    loose = b"<head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'\"></head><body>"
+    assert viewer_csp_header(loose) == fallback
+    # No meta at all: fallback.
+    assert viewer_csp_header(b"<html><head></head><body>x</body></html>") == fallback
+
+
 def test_failed_run_is_viewable(failed_bundle: Bundle, served):
     port = served(failed_bundle)
     status, headers, body = _get(port, "/")
