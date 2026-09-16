@@ -67,6 +67,10 @@ SEVERITY_ORDER = {
 # secret values (`${VAR}` substitutions, credential values) are scrubbed from
 # every file the run writes.
 BUNDLE_FORMAT_VERSION = "1.1"
+# Oldest bundle version whose spec-bearing files may be served raw.
+REDACTED_BUNDLE_MIN_VERSION = "1.1"
+# Files that carried expanded credentials before that version.
+SPEC_BEARING_BUNDLE_FILES = ("resolved_spec.json", "run_manifest.json", "findings.json")
 
 # Secret values shorter than this are not value-scrubbed (too likely to collide with
 # ordinary words); they are still masked by key/position rules.

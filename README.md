@@ -1312,10 +1312,10 @@ Endpoints:
 - `POST /v1/runs`
 - `GET /v1/runs/{run_id}`
 - `GET /v1/runs/{run_id}/findings` — sorted by severity rank (`SEVERITY_ORDER`), not lexically; each finding carries `evidence_artifacts` (bundle-relative form of the absolute `evidence_refs`, `null` for refs outside the run directory)
-- `GET /v1/runs/{run_id}/scorecard` · `/summary` · `/manifest` · `/invocations` — content of `scorecard.json`, `run_summary.json`, `run_manifest.json`, `engine_invocations.json`; `404` when the file is absent
+- `GET /v1/runs/{run_id}/scorecard` · `/summary` · `/manifest` · `/invocations` — content of `scorecard.json`, `run_summary.json`, `run_manifest.json`, `engine_invocations.json`; `404` when the file is absent. These and `/findings` apply the key/position redaction rules **at read time** as well, so bundles written before `1.1` are served with credentials masked
 - `GET /v1/runs/{run_id}/artifacts` — `artifacts_index.json` (`path`, `size_bytes`, `sha256`)
-- `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`; HTML and unknown types are `Content-Disposition: attachment`
-- `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256
+- `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file, served raw. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: no-store`; HTML and unknown types are `Content-Disposition: attachment`. For bundles older than `1.1`, `resolved_spec.json`, `run_manifest.json` and `findings.json` answer `409` (they may hold expanded credentials); use the redacting JSON endpoints above instead
+- `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256. `409` for bundles older than `1.1`
 - `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists
 - `POST /v1/waivers`
 - `GET /v1/waivers`

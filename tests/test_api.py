@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -268,6 +269,105 @@ def test_findings_expose_bundle_relative_evidence_paths(client: TestClient, comp
     ]
     for rel in execution["evidence_artifacts"]:
         assert client.get(f"/v1/runs/{completed_run}/artifacts/{rel}").status_code == 200
+
+
+LEGACY_SECRET = "legacy-bearer-token-from-a-1.0-bundle"
+
+
+@pytest.fixture
+def legacy_run(client: TestClient, orchestrator: Orchestrator, completed_run: str) -> str:
+    """A pre-1.1 bundle as found on an operator's disk: version 1.0, credentials on disk
+    and in SQLite finding metadata (the `env_overrides` shape that 1.0 wrote)."""
+    run_dir = Path(orchestrator.artifact_store.root_dir) / completed_run
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest["bundle_format_version"] = "1.0"
+    manifest["targets"][0]["auth"] = {"headers": {"Authorization": f"Bearer {LEGACY_SECRET}"}}
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    resolved = json.loads((run_dir / "resolved_spec.json").read_text(encoding="utf-8"))
+    resolved["targets"][0]["auth"] = {"headers": {"Authorization": f"Bearer {LEGACY_SECRET}"}}
+    (run_dir / "resolved_spec.json").write_text(json.dumps(resolved), encoding="utf-8")
+
+    summary = json.loads((run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    summary["engine_summaries"][0]["metrics"]["api_key"] = LEGACY_SECRET
+    (run_dir / "run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    invocations = json.loads((run_dir / "engine_invocations.json").read_text(encoding="utf-8"))
+    invocations[0]["metrics"]["bearer_token"] = LEGACY_SECRET
+    (run_dir / "engine_invocations.json").write_text(json.dumps(invocations), encoding="utf-8")
+
+    findings = orchestrator.metadata_store.get_findings(completed_run)
+    findings[0]["metadata"]["env_overrides"] = {"OPENAI_API_KEY": LEGACY_SECRET}
+    from urt.types import UnifiedFinding
+
+    orchestrator.metadata_store.insert_findings(
+        [UnifiedFinding(**{k: v for k, v in findings[0].items() if k != "evidence_artifacts"})]
+    )
+    return completed_run
+
+
+def test_bundle_json_endpoints_redact_legacy_content_at_read_time(client: TestClient, legacy_run: str):
+    manifest = client.get(f"/v1/runs/{legacy_run}/manifest")
+    assert manifest.status_code == 200
+    assert LEGACY_SECRET not in manifest.text
+    assert manifest.json()["targets"][0]["auth"]["headers"]["Authorization"] == "***REDACTED***"
+    assert manifest.json()["bundle_format_version"] == "1.0"
+
+    summary = client.get(f"/v1/runs/{legacy_run}/summary")
+    assert LEGACY_SECRET not in summary.text
+    assert summary.json()["engine_summaries"][0]["metrics"]["api_key"] == "***REDACTED***"
+
+    invocations = client.get(f"/v1/runs/{legacy_run}/invocations")
+    assert LEGACY_SECRET not in invocations.text
+    assert invocations.json()[0]["metrics"]["bearer_token"] == "***REDACTED***"
+
+    findings = client.get(f"/v1/runs/{legacy_run}/findings")
+    assert LEGACY_SECRET not in findings.text
+    leaked = next(f for f in findings.json() if "env_overrides" in f["metadata"])
+    assert leaked["metadata"]["env_overrides"]["OPENAI_API_KEY"] == "***REDACTED***"
+
+    runs = client.get("/v1/runs")
+    assert LEGACY_SECRET not in runs.text
+
+
+@pytest.mark.parametrize("relative_path", ["resolved_spec.json", "run_manifest.json", "findings.json"])
+def test_raw_download_of_spec_bearing_files_is_refused_for_legacy_bundles(
+    client: TestClient, legacy_run: str, relative_path: str
+):
+    response = client.get(f"/v1/runs/{legacy_run}/artifacts/{relative_path}")
+    assert response.status_code == 409
+    assert "1.0" in response.json()["detail"]
+    assert "1.1" in response.json()["detail"]
+    assert LEGACY_SECRET not in response.text
+
+
+def test_zip_is_refused_for_legacy_bundles_but_other_files_still_download(client: TestClient, legacy_run: str):
+    archive = client.get(f"/v1/runs/{legacy_run}/artifacts.zip")
+    assert archive.status_code == 409
+    assert LEGACY_SECRET not in archive.text
+
+    report = client.get(f"/v1/runs/{legacy_run}/artifacts/report.md")
+    assert report.status_code == 200
+
+
+def test_inline_artifact_responses_carry_csp_and_no_store(client: TestClient, completed_run: str):
+    for rel in ("scorecard.json", "report.md", "raw/garak/local-http_stdout.log"):
+        response = client.get(f"/v1/runs/{completed_run}/artifacts/{rel}")
+        assert response.status_code == 200, rel
+        assert response.headers["content-security-policy"] == "default-src 'none'; sandbox", rel
+        assert response.headers["cache-control"] == "no-store", rel
+        assert response.headers["x-content-type-options"] == "nosniff", rel
+
+
+def test_run_id_slug_is_filesystem_and_header_safe(client: TestClient):
+    response = client.post("/v1/runs", json=passing_spec(name='Weird "Name"/with\\odd chars\n'))
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+    assert re.fullmatch(r"run-[a-z0-9._-]+", run_id), run_id
+
+    archive = client.get(f"/v1/runs/{run_id}/artifacts.zip")
+    assert archive.status_code == 200
+    assert archive.headers["content-disposition"] == f'attachment; filename="{run_id}.zip"'
 
 
 def test_waivers_validate_create_and_filter(client: TestClient):

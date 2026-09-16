@@ -59,6 +59,18 @@ def redact_run_spec_payload(spec_payload: dict[str, Any]) -> dict[str, Any]:
     return redact_payload(out)
 
 
+def redact_bundle_payload(content: Any) -> Any:
+    """Read-time redaction for bundle JSON of any format version.
+
+    Dict payloads (spec, manifest, summary) get the spec rules (auth leaves +
+    key heuristics); lists (findings, invocations) get the key heuristics. This is
+    what makes serving pre-1.1 bundles safe regardless of what was written.
+    """
+    if isinstance(content, dict):
+        return redact_run_spec_payload(content)
+    return redact_payload(content)
+
+
 def _leaf_strings(value: Any) -> Iterable[str]:
     if isinstance(value, dict):
         for item in value.values():

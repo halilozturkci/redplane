@@ -8,14 +8,22 @@ returns, bounded only by `budget.max_duration_seconds` (14400 s for
 from __future__ import annotations
 
 import os
+import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
-from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB, SEVERITY_ORDER
+from .constants import (
+    DEFAULT_ARTIFACT_ROOT,
+    DEFAULT_METADATA_DB,
+    REDACTED_BUNDLE_MIN_VERSION,
+    SEVERITY_ORDER,
+    SPEC_BEARING_BUNDLE_FILES,
+)
 from .orchestrator import Orchestrator
 from .storage.artifact_store import ArtifactPathError
 from .types import RunSpec, ValidationError
@@ -45,9 +53,18 @@ ATTACHMENT_MEDIA_TYPES = {
 }
 
 
+_ARTIFACT_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    # Artifacts are attacker-influenced tool output; never let them script or be
+    # cached if a UI is ever served from this origin.
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "no-store",
+}
+
+
 def _artifact_response(path: Path, relative_path: str) -> FileResponse:
     suffix = path.suffix.lower()
-    headers = {"X-Content-Type-Options": "nosniff"}
+    headers = dict(_ARTIFACT_HEADERS)
     if suffix in INLINE_MEDIA_TYPES:
         return FileResponse(path, media_type=INLINE_MEDIA_TYPES[suffix], headers=headers)
     media_type = ATTACHMENT_MEDIA_TYPES.get(suffix, "application/octet-stream")
@@ -120,25 +137,44 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
         _require_run(run_id)
         return orch.list_artifacts(run_id)
 
+    def _require_redacted_bundle(run_id: str) -> None:
+        if orch.bundle_is_redacted(run_id):
+            return
+        version = orch.bundle_format_version(run_id) or "unknown"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Bundle format version {version} predates write-time redaction "
+                f"({REDACTED_BUNDLE_MIN_VERSION}); resolved_spec.json, run_manifest.json, "
+                "findings.json and the zip may contain expanded credentials and are not served raw. "
+                "Use the JSON endpoints (/manifest, /summary, /invocations, /findings), which redact "
+                "at read time. See README 'Output, Reports, and Audit Format'."
+            ),
+        )
+
     @app.get("/v1/runs/{run_id}/artifacts.zip")
     def get_artifacts_zip(run_id: str) -> Response:
         _require_run(run_id)
+        _require_redacted_bundle(run_id)
         try:
             payload = orch.artifact_zip(run_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Run directory not found") from exc
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", run_id)
         return Response(
             content=payload,
             media_type="application/zip",
             headers={
-                "Content-Disposition": f'attachment; filename="{run_id}.zip"',
-                "X-Content-Type-Options": "nosniff",
+                **_ARTIFACT_HEADERS,
+                "Content-Disposition": f'attachment; filename="{safe_name}.zip"',
             },
         )
 
     @app.get("/v1/runs/{run_id}/artifacts/{relative_path:path}")
     def get_artifact_file(run_id: str, relative_path: str) -> FileResponse:
         _require_run(run_id)
+        if relative_path in SPEC_BEARING_BUNDLE_FILES:
+            _require_redacted_bundle(run_id)
         try:
             path = orch.artifact_path(run_id, relative_path)
         except ArtifactPathError as exc:
@@ -149,7 +185,7 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
 
     for endpoint_name, bundle_file in BUNDLE_JSON_ENDPOINTS.items():
 
-        def _make_bundle_reader(file_name: str):
+        def _make_bundle_reader(file_name: str) -> Callable[[str], Any]:
             def read_bundle(run_id: str) -> Any:
                 _require_run(run_id)
                 content = orch.read_bundle_json(run_id, file_name)

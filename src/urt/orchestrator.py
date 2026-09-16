@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import re
 import traceback
 import uuid
 from dataclasses import asdict
@@ -20,15 +20,26 @@ from .constants import (
     BUNDLE_FORMAT_VERSION,
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_METADATA_DB,
+    DEFAULT_RUN_PROFILE,
+    REDACTED_BUNDLE_MIN_VERSION,
     RUN_PROFILE_DEFAULTS,
     SEVERITY_ORDER,
 )
 from .normalization import build_scorecard, normalize_findings
-from .redaction import Scrubber, redact_run_spec_payload
+from .redaction import Scrubber, redact_bundle_payload, redact_run_spec_payload
 from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
 from .types import EngineRunResult, EvalRunResult, RunRecord, RunSpec, UnifiedFinding
+
+
+def _parse_version(value: str | None) -> tuple[int, ...]:
+    if not value:
+        return (0,)
+    try:
+        return tuple(int(part) for part in str(value).split("."))
+    except ValueError:
+        return (0,)
 
 
 class Orchestrator:
@@ -49,7 +60,9 @@ class Orchestrator:
 
     @staticmethod
     def _new_run_id(spec: RunSpec) -> str:
-        slug = spec.name.lower().replace(" ", "-")
+        # The run id is a directory name, a URL segment and a Content-Disposition
+        # filename; keep it to a safe alphabet.
+        slug = re.sub(r"[^a-z0-9._-]+", "-", spec.name.lower()).strip("-") or "run"
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         return f"run-{slug}-{ts}-{uuid.uuid4().hex[:8]}"
 
@@ -516,7 +529,7 @@ class Orchestrator:
         findings_path = row.get("findings_path")
         if not findings_path or not Path(findings_path).exists():
             return None
-        profile_defaults = RUN_PROFILE_DEFAULTS.get(row.get("profile", ""), RUN_PROFILE_DEFAULTS["nightly"])
+        profile_defaults = RUN_PROFILE_DEFAULTS.get(row.get("profile", ""), RUN_PROFILE_DEFAULTS[DEFAULT_RUN_PROFILE])
         effective = (threshold or profile_defaults.get("gate_threshold", "high")).lower()
         result = gate_result(load_findings(findings_path), threshold=effective, waivers=waivers)
         return {
@@ -527,7 +540,9 @@ class Orchestrator:
         }
 
     def get_findings(self, run_id: str) -> list[dict[str, Any]]:
-        findings = self.metadata_store.get_findings(run_id)
+        # Read-time key redaction covers rows written by pre-1.1 code (e.g. the
+        # `metadata.env_overrides` dict); write-time scrubbing covers everything else.
+        findings = redact_bundle_payload(self.metadata_store.get_findings(run_id))
         for item in findings:
             # evidence_refs are absolute filesystem paths; expose the bundle-relative
             # form so clients can fetch them through the artifact endpoints.
@@ -552,7 +567,23 @@ class Orchestrator:
             raise ValueError(f"Not a bundle JSON file: {file_name}")
         if not self.metadata_store.get_run(run_id):
             return None
-        return self.artifact_store.read_json(run_id, file_name)
+        content = self.artifact_store.read_json(run_id, file_name)
+        return None if content is None else redact_bundle_payload(content)
+
+    def bundle_format_version(self, run_id: str) -> str | None:
+        manifest = self.artifact_store.read_json(run_id, "run_manifest.json")
+        if not isinstance(manifest, dict):
+            return None
+        version = manifest.get("bundle_format_version")
+        return None if version is None else str(version)
+
+    def bundle_is_redacted(self, run_id: str) -> bool:
+        """True when the bundle was written with write-time redaction (>= 1.1).
+
+        Pre-1.1 bundles may hold expanded credentials in the spec-bearing files, so
+        raw downloads of those files and of the whole directory must be refused.
+        """
+        return _parse_version(self.bundle_format_version(run_id)) >= _parse_version(REDACTED_BUNDLE_MIN_VERSION)
 
     def artifact_path(self, run_id: str, relative_path: str) -> Path:
         """Filesystem path of one artifact, confined to the run directory (see ArtifactStore)."""
