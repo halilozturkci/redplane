@@ -81,17 +81,6 @@
     }
   }
 
-  function openFromHash() {
-    var hash = window.location.hash;
-    if (hash.indexOf("#finding=") !== 0) { return; }
-    var wanted = decodeURIComponent(hash.slice("#finding=".length));
-    var node = document.querySelector('details.finding[data-finding-id="' + cssEscape(wanted) + '"]');
-    if (!node) { return; }
-    node.hidden = false;
-    node.open = true;
-    node.scrollIntoView();
-  }
-
   function wire() {
     FACETS.forEach(function (name) {
       var el = document.getElementById("facet-" + name);

@@ -202,6 +202,30 @@ def test_legacy_bundle_pages_are_redacted_and_do_not_link_refused_files(legacy_b
     assert LEGACY_SECRET not in client.get("/ui").text
 
 
+def test_legacy_failed_run_detail_withholds_error_channels(legacy_failed_bundle: Bundle):
+    client = TestClient(create_app(legacy_failed_bundle.orchestrator))
+    run_id = legacy_failed_bundle.run_id
+
+    detail = client.get(f"/ui/runs/{run_id}")
+    assert detail.status_code == 200
+    assert LEGACY_SECRET not in detail.text
+    assert "not shown for pre-1.1 bundles" in detail.text
+    assert "predates write-time redaction" in detail.text
+    # The other surfaces that touch the manifest error stay clean as well.
+    assert LEGACY_SECRET not in client.get(f"/ui/runs/{run_id}/findings").text
+    assert LEGACY_SECRET not in client.get(f"/v1/runs/{run_id}/manifest").text
+    # SQLite `error_message` is a pre-existing channel the JSON API exposes verbatim
+    # for legacy rows; the HTML list must not repeat it.
+    assert LEGACY_SECRET not in client.get("/ui").text
+
+
+def test_nav_has_no_cdn_backed_links(client: TestClient, rich_bundle: Bundle):
+    page = client.get(f"/ui/runs/{rich_bundle.run_id}").text
+    nav = re.search(r'<nav class="nav">(.*?)</nav>', page, flags=re.S).group(1)
+    assert 'href="/docs"' not in nav  # Swagger UI pulls swagger-ui-dist from a CDN
+    assert 'href="/v1/runs"' in nav
+
+
 def test_failed_run_detail_shows_error_without_invented_numbers(rich_bundle: Bundle):
     from urt.types import RunSpec
 

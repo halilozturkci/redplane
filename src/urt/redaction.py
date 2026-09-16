@@ -62,8 +62,9 @@ def redact_run_spec_payload(spec_payload: dict[str, Any]) -> dict[str, Any]:
 # Pre-1.1 finding metadata carried the params.env dict under this key; 1.1 records
 # `env_override_keys` (names only). Any surviving dict here is credentials by position.
 LEGACY_ENV_DICT_KEY = "env_overrides"
-# Argv fields that pre-1.1 bundles wrote without value scrubbing.
-_ARGV_KEYS = {"command"}
+# Free-text fields that pre-1.1 bundles wrote without value scrubbing: argv, and the
+# error strings into which `subprocess.TimeoutExpired` copies the full argv.
+_LEGACY_FREE_TEXT_KEYS = {"command", "error", "error_message"}
 
 
 def _mask_positional(value: Any, *, legacy: bool) -> Any:
@@ -71,7 +72,7 @@ def _mask_positional(value: Any, *, legacy: bool) -> Any:
         out: dict[str, Any] = {}
         for key, item in value.items():
             name = str(key)
-            if name == LEGACY_ENV_DICT_KEY or (legacy and name in _ARGV_KEYS):
+            if name == LEGACY_ENV_DICT_KEY or (legacy and name in _LEGACY_FREE_TEXT_KEYS):
                 out[name] = _mask_leaves(item)
             else:
                 out[name] = _mask_positional(item, legacy=legacy)
@@ -87,8 +88,9 @@ def redact_bundle_payload(content: Any, *, legacy: bool = False) -> Any:
     Dict payloads (spec, manifest, summary) get the spec rules (auth leaves +
     key heuristics); lists (findings, invocations) get the key heuristics. Any
     `env_overrides` dict is masked by position. With `legacy=True` (bundle written
-    before value scrubbing existed) `command` argv is masked too, since a secret
-    passed on the command line was never scrubbed from it.
+    before value scrubbing existed) `command` argv and free-text `error` /
+    `error_message` strings are masked too, since a secret passed on the command
+    line was never scrubbed from them (`TimeoutExpired` copies the argv into the error).
     """
     if isinstance(content, dict):
         redacted = redact_run_spec_payload(content)
