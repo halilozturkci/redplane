@@ -24,6 +24,7 @@ from ..constants import SEVERITY_ORDER, TERMINAL_RUN_STATUSES, WAIVER_DEFAULT_EX
 from ..diff import comparable, comparable_runs
 from ..gateway.traces import TracePathError
 from ..gateway_client import GatewayUnavailable, fetch_sessions
+from ..matrix import DEFAULT_RUN_LIMIT, MAX_RUN_LIMIT, build_run_matrix
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
 from ..report import parse_eval_min_pass_rate
@@ -416,6 +417,23 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         if request.headers.get("hx-request") == "true":
             return Response(status_code=200, headers={**PAGE_HEADERS, "HX-Redirect": target})
         return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
+
+    # --- multi-run matrix (targets × runs) for the lead ---
+
+    @router.get("/matrix", response_class=HTMLResponse)
+    def matrix_page(
+        request: Request,
+        target: str = Query(default=""),
+        name_prefix: str = Query(default=""),
+        limit: str = Query(default=str(DEFAULT_RUN_LIMIT)),
+    ) -> HTMLResponse:
+        if not limit.strip().isdigit() or not 1 <= int(limit) <= MAX_RUN_LIMIT:
+            raise HTTPException(status_code=400, detail=f"limit must be an integer between 1 and {MAX_RUN_LIMIT}")
+        rows = orch.list_runs()
+        matrix = build_run_matrix(rows, orch.run_findings, target=target or None, name_prefix=name_prefix or None, limit=int(limit))
+        all_targets = sorted({str(t) for row in rows for t in (row.get("targets") or [])})
+        query = urlencode({k: v for k, v in matrix.filters.items() if v not in ("", None)})
+        return page("matrix.html", request, matrix=matrix.to_dict(), all_targets=all_targets, max_limit=MAX_RUN_LIMIT, query=query)
 
     # --- gateway traces and sessions (§4.8): read-only ---
 

@@ -34,6 +34,7 @@ from .constants import (
 from .gateway.traces import TracePathError
 from .gateway_client import GatewayUnavailable, fetch_sessions
 from .jobs import RunWorker
+from .matrix import DEFAULT_RUN_LIMIT, MAX_RUN_LIMIT
 from .orchestrator import Orchestrator
 from .policy.waivers import waiver_is_active
 from .report import parse_eval_min_pass_rate
@@ -250,6 +251,33 @@ def create_app(orchestrator: Orchestrator | None = None, *, api_key: str | None 
         if coverage is None:
             raise HTTPException(status_code=404, detail="Run directory not found")
         return coverage
+
+    @app.get("/v1/runs/{run_id}/coverage.csv")
+    def get_coverage_csv(run_id: str) -> Response:
+        """The coverage matrix flattened to one row per framework × label × target, with the
+        heuristic `basis` on every row. Formula-shaped cells are neutralised."""
+        _require_run(run_id)
+        text = orch.coverage_csv(run_id)
+        if text is None:
+            raise HTTPException(status_code=404, detail="Run directory not found")
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", run_id)
+        return Response(
+            content=text,
+            media_type="text/csv; charset=utf-8",
+            headers={**_ARTIFACT_HEADERS, "Content-Disposition": f'attachment; filename="{safe_name}-coverage.csv"'},
+        )
+
+    @app.get("/v1/matrix")
+    def get_matrix(
+        target: str | None = Query(default=None),
+        name_prefix: str | None = Query(default=None),
+        limit: int = Query(default=DEFAULT_RUN_LIMIT),
+    ) -> dict[str, Any]:
+        """Targets × runs matrix (newest runs first, at most `limit` columns); each cell is
+        that target's per-target scorecard inside the run, `null` when the run lacked it."""
+        if limit < 1 or limit > MAX_RUN_LIMIT:
+            raise HTTPException(status_code=400, detail=f"limit must be between 1 and {MAX_RUN_LIMIT}")
+        return orch.run_matrix(target=target or None, name_prefix=name_prefix or None, limit=limit).to_dict()
 
     @app.get("/v1/runs/{run_id}/gate")
     def get_gate(
