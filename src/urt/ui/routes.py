@@ -25,7 +25,7 @@ from .bundle import FindingView, RunBundle, load_bundle
 from .csrf import CSRF_COOKIE, CSRF_FIELD, csrf_token_for, set_csrf_cookie, verify_csrf
 from .filters import FindingFilters, filter_findings
 from .forms import read_form
-from .render import SERVED_CSP, render_template, served_context
+from .render import SERVED_CSP, render_template, served_context, sparkline
 
 STATIC_ASSETS = {
     "app.css": "text/css; charset=utf-8",
@@ -156,6 +156,36 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             raise HTTPException(status_code=404, detail="Finding not found")
         context = served_context(bundle)
         return html(render_template("partials/_finding_drawer.html", view=view, **context))
+
+    # --- diff and trend (§4.5) ---
+
+    @router.get("/diff", response_class=HTMLResponse)
+    def diff_page(a: str = Query(default=""), b: str = Query(default="")) -> HTMLResponse:
+        diff = None
+        if a and b:
+            for run_id in (a, b):
+                if not orch.get_run(run_id):
+                    raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            diff = orch.diff(a, b)
+        runs = orch.metadata_store.list_runs()
+        return html(render_template("diff.html", mode="served", runs=runs, a=a, b=b, diff=diff))
+
+    @router.get("/targets/{target_id}/trend", response_class=HTMLResponse)
+    def trend_page(target_id: str) -> HTMLResponse:
+        points = orch.trend(target_id)
+        if not points:
+            raise HTTPException(status_code=404, detail="No runs with findings for this target")
+        return html(
+            render_template(
+                "trend.html",
+                mode="served",
+                target_id=target_id,
+                points=points,
+                asr_spark=sparkline([p.asr_overall for p in points], ymax=1.0),
+                ch_spark=sparkline([p.critical_high for p in points]),
+                eval_spark=sparkline([p.eval_pass_rate_run for p in points], ymax=1.0),
+            )
+        )
 
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 

@@ -1,0 +1,5 @@
+<svg class="spark" viewBox="0 0 {{ spark.width }} {{ spark.height }}" width="{{ spark.width }}" height="{{ spark.height }}" role="img" aria-label="{{ spark_label }}">
+  <title>{{ spark_label }}</title>
+  {% if spark.count > 1 %}<polyline class="spark-line" fill="none" points="{{ spark.points }}"></polyline>{% endif %}
+  {% for x, y in spark.dots %}<circle class="spark-dot" cx="{{ x }}" cy="{{ y }}" r="2.5"></circle>{% endfor %}
+</svg>

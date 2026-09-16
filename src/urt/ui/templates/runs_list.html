@@ -48,7 +48,7 @@
       </td>
       <td class="mono">{{ row.created_at }}</td>
       <td class="num">{{ row.get("duration_seconds") | seconds }}</td>
-      <td>{{ (row.get("targets") or []) | join(", ") }}</td>
+      <td>{% for target in row.get("targets") or [] %}<a href="/ui/targets/{{ target | urlencode }}/trend" title="trend for this target">{{ target }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
       <td>{{ (row.get("engines_executed") or []) | join(", ") or "—" }}{% if row.get("engines_skipped") %} <span class="muted">/ skipped: {{ row.get("engines_skipped") | join(", ") }}</span>{% endif %}</td>
       <td class="num">{{ counts.get("critical") if counts else "—" }}</td>
       <td class="num">{{ counts.get("high") if counts else "—" }}</td>
@@ -61,6 +61,7 @@
         {% else %}
         <span class="muted">—</span>
         {% endif %}
+        <div class="note"><a href="/ui/diff?b={{ row.run_id | urlencode }}">compare…</a></div>
       </td>
     </tr>
   {% endfor %}
