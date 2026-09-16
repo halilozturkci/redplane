@@ -27,6 +27,8 @@ from .constants import (
     SEVERITY_ORDER,
 )
 from .orchestrator import Orchestrator
+from .policy.waivers import waiver_is_active
+from .report import parse_eval_min_pass_rate
 from .storage.artifact_store import ArtifactPathError
 from .types import RunSpec, ValidationError
 from .ui.routes import mount_ui
@@ -186,10 +188,15 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
         run_id: str,
         threshold: str = Query(default="high"),
         ignore_waivers: bool = Query(default=False),
+        eval_min_pass_rate: str | None = Query(default=None),
     ) -> dict[str, Any]:
         _require_run(run_id)
         _check_threshold(threshold)
-        result = orch.gate(run_id, threshold=threshold, ignore_waivers=ignore_waivers)
+        try:
+            eval_min = parse_eval_min_pass_rate(eval_min_pass_rate)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        result = orch.gate(run_id, threshold=threshold, ignore_waivers=ignore_waivers, eval_min_pass_rate=eval_min)
         if result is None:
             raise HTTPException(status_code=404, detail="Findings not available for run")
         return result.to_dict()
@@ -212,12 +219,63 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
 
         try:
             return orch.create_waiver(waiver_payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/v1/waivers")
-    def list_waivers(target_id: str | None = Query(default=None)) -> list[dict[str, Any]]:
-        return orch.list_waivers(target_id)
+    def list_waivers(
+        target_id: str | None = Query(default=None),
+        active: bool | None = Query(default=None),
+    ) -> list[dict[str, Any]]:
+        rows = [{**row, "active": waiver_is_active(row)} for row in orch.list_waivers(target_id)]
+        if active is None:
+            return rows
+        return [row for row in rows if row["active"] is active]
+
+    @app.get("/v1/waivers/{waiver_id}")
+    def get_waiver(waiver_id: str) -> dict[str, Any]:
+        row = orch.get_waiver(waiver_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Waiver not found")
+        return row
+
+    @app.patch("/v1/waivers/{waiver_id}")
+    def patch_waiver(waiver_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Only `expires_at` is mutable. `{"revoke": true}` sets it to now. Waivers are
+        never deleted; every change is appended to the waiver's event history."""
+        allowed = {"expires_at", "revoke"}
+        unknown = sorted(set(payload) - allowed)
+        if unknown or not payload:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {sorted(allowed)} may be patched (append-only: reason/owner/control never change); got {unknown}",
+            )
+        try:
+            if payload.get("revoke"):
+                row = orch.revoke_waiver(waiver_id)
+            else:
+                row = orch.update_waiver_expiry(waiver_id, str(payload["expires_at"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if row is None:
+            raise HTTPException(status_code=404, detail="Waiver not found")
+        return row
+
+    @app.get("/v1/runs/{run_id}/waiver-preview")
+    def waiver_preview(
+        run_id: str,
+        control_id: str = Query(default=""),
+        target_id: str = Query(default="*"),
+    ) -> dict[str, Any]:
+        _require_run(run_id)
+        if not control_id.strip():
+            raise HTTPException(status_code=400, detail="control_id is required")
+        matches = orch.waiver_preview(run_id, control_id=control_id, target_id=target_id)
+        if matches is None:
+            raise HTTPException(status_code=404, detail="Findings not available for run")
+        return {"run_id": run_id, "control_id": control_id, "target_id": target_id, "count": len(matches), "matches": matches}
 
     mount_ui(app, orch)
     return app

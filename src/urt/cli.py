@@ -16,7 +16,15 @@ from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
 from .storage.artifact_store import ArtifactPathError, ArtifactStore
-from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
+from .report import (
+    GateResult,
+    gate_result,
+    load_findings,
+    parse_eval_min_pass_rate,
+    render_csv,
+    render_markdown,
+    scorecard_eval_pass_rate,
+)
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
 from .gateway.redaction import redact_payload
@@ -245,7 +253,13 @@ def cmd_gate(args: argparse.Namespace) -> int:
     waivers: list[dict[str, Any]] = []
     if not args.ignore_waivers:
         waivers = orchestrator.list_waivers()
-    result = gate_result(findings, threshold=args.threshold, waivers=waivers)
+    result = gate_result(
+        findings,
+        threshold=args.threshold,
+        waivers=waivers,
+        eval_min_pass_rate=args.eval_min_pass_rate,
+        eval_pass_rate=scorecard_eval_pass_rate(orchestrator.artifact_store.read_json(args.run_id, "scorecard.json")),
+    )
     print(result.message)
     if args.explain:
         _print_gate_explanation(result)
@@ -332,6 +346,16 @@ def cmd_waivers_create(args: argparse.Namespace) -> int:
     }
     created = orchestrator.create_waiver(payload)
     print(json.dumps(created, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_waivers_revoke(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    row = orchestrator.revoke_waiver(args.waiver_id, note=args.note)
+    if row is None:
+        print(f"Waiver not found: {args.waiver_id}", file=sys.stderr)
+        return 1
+    print(json.dumps(row, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -468,6 +492,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List the blocking findings and the waived findings with their waiver",
     )
+    p_gate.add_argument(
+        "--eval-min-pass-rate",
+        type=parse_eval_min_pass_rate,
+        default=None,
+        metavar="0..1",
+        help="Also fail the gate when the scorecard eval_pass_rate is below this fraction "
+        "(fails when the run has no evaluator scores)",
+    )
     p_gate.set_defaults(func=cmd_gate)
 
     p_runs = sub.add_parser("runs", help="List runs")
@@ -498,6 +530,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_waivers_create.add_argument("--expires-at", required=True, help="ISO-8601 expiry timestamp")
     p_waivers_create.add_argument("--waiver-id", help="Optional stable waiver id")
     p_waivers_create.set_defaults(func=cmd_waivers_create)
+    p_waivers_revoke = waiver_sub.add_parser(
+        "revoke", help="Revoke a waiver: set expires_at to now (the row and its history are kept)"
+    )
+    p_waivers_revoke.add_argument("--waiver-id", required=True)
+    p_waivers_revoke.add_argument("--note", help="Optional note recorded with the revoke event")
+    p_waivers_revoke.set_defaults(func=cmd_waivers_revoke)
 
     p_view = sub.add_parser(
         "view", help="Serve one run directory (report.html viewer + bundle files) on loopback"

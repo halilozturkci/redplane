@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from ..constants import SEVERITY_ORDER
 from ..orchestrator import Orchestrator
+from ..report import parse_eval_min_pass_rate
 from .bundle import RunBundle, load_bundle
 from .filters import FindingFilters, filter_findings
 from .render import SERVED_CSP, render_template, served_context
@@ -39,6 +40,13 @@ def _check_threshold(threshold: str | None) -> str | None:
             status_code=400, detail=f"Unsupported threshold '{threshold}'. Supported: {list(SEVERITY_ORDER)}"
         )
     return threshold.lower()
+
+
+def _check_eval_min(raw: str | None) -> float | None:
+    try:
+        return parse_eval_min_pass_rate(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
@@ -87,9 +95,15 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         run_id: str,
         threshold: str = Query(default=""),
         ignore_waivers: bool = Query(default=False),
+        eval_min_pass_rate: str = Query(default=""),
     ) -> HTMLResponse:
         bundle = bundle_for(run_id)
-        context = served_context(bundle, threshold=_check_threshold(threshold), ignore_waivers=ignore_waivers)
+        context = served_context(
+            bundle,
+            threshold=_check_threshold(threshold),
+            ignore_waivers=ignore_waivers,
+            eval_min_pass_rate=_check_eval_min(eval_min_pass_rate),
+        )
         return html(render_template("run_detail.html", **context))
 
     @router.get("/runs/{run_id}/gate", response_class=HTMLResponse)
@@ -97,9 +111,15 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         run_id: str,
         threshold: str = Query(default=""),
         ignore_waivers: bool = Query(default=False),
+        eval_min_pass_rate: str = Query(default=""),
     ) -> HTMLResponse:
         bundle = bundle_for(run_id)
-        context = served_context(bundle, threshold=_check_threshold(threshold), ignore_waivers=ignore_waivers)
+        context = served_context(
+            bundle,
+            threshold=_check_threshold(threshold),
+            ignore_waivers=ignore_waivers,
+            eval_min_pass_rate=_check_eval_min(eval_min_pass_rate),
+        )
         return html(render_template("partials/_gate_verdict.html", result=context["gate"], **context))
 
     @router.get("/runs/{run_id}/findings", response_class=HTMLResponse)

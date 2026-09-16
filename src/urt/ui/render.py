@@ -222,6 +222,7 @@ def served_context(
     *,
     threshold: str | None = None,
     ignore_waivers: bool = False,
+    eval_min_pass_rate: float | None = None,
     filters: FindingFilters | None = None,
     href_for: HrefFor | None = None,
 ) -> dict[str, Any]:
@@ -231,9 +232,10 @@ def served_context(
     effective = threshold or bundle.default_threshold
     context.update(
         {
-            "gate": bundle.gate(effective, ignore_waivers=ignore_waivers),
+            "gate": bundle.gate(effective, ignore_waivers=ignore_waivers, eval_min_pass_rate=eval_min_pass_rate),
             "gate_threshold": effective,
             "ignore_waivers": ignore_waivers,
+            "eval_min_pass_rate": "" if eval_min_pass_rate is None else f"{eval_min_pass_rate:g}",
             "filters": (filters or FindingFilters()).to_dict(),
             "zip_href": None if bundle.legacy else f"/v1/runs/{bundle.run_id}/artifacts.zip",
             "report_href": context["href_for"]("report.html"),
