@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ..constants import SEVERITY_ORDER, WAIVER_DEFAULT_EXPIRY_DAYS
+from ..diff import comparable, comparable_runs
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
 from ..report import parse_eval_min_pass_rate
@@ -25,7 +26,7 @@ from .bundle import FindingView, RunBundle, load_bundle
 from .csrf import CSRF_COOKIE, CSRF_FIELD, csrf_token_for, set_csrf_cookie, verify_csrf
 from .filters import FindingFilters, filter_findings
 from .forms import read_form
-from .render import SERVED_CSP, render_template, served_context
+from .render import SERVED_CSP, render_template, served_context, sparkline
 
 STATIC_ASSETS = {
     "app.css": "text/css; charset=utf-8",
@@ -156,6 +157,44 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             raise HTTPException(status_code=404, detail="Finding not found")
         context = served_context(bundle)
         return html(render_template("partials/_finding_drawer.html", view=view, **context))
+
+    # --- diff and trend (§4.5) ---
+
+    @router.get("/diff", response_class=HTMLResponse)
+    def diff_page(a: str = Query(default=""), b: str = Query(default="")) -> HTMLResponse:
+        diff = None
+        for run_id in (a, b):
+            if run_id and not orch.get_run(run_id):
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+        if a and b:
+            diff = orch.diff(a, b)
+        runs = orch.list_runs()
+        by_id = {row["run_id"]: row for row in runs}
+        anchor = by_id.get(a) if a else None
+        candidates = comparable_runs(runs, anchor) if anchor else []
+        unrelated = bool(anchor and b and b in by_id and not comparable(anchor, by_id[b]))
+        return html(
+            render_template(
+                "diff.html", mode="served", runs=runs, candidates=candidates, a=a, b=b, diff=diff, unrelated=unrelated
+            )
+        )
+
+    @router.get("/targets/{target_id}/trend", response_class=HTMLResponse)
+    def trend_page(target_id: str) -> HTMLResponse:
+        points = orch.trend(target_id)
+        if not points:
+            raise HTTPException(status_code=404, detail="No runs with findings for this target")
+        return html(
+            render_template(
+                "trend.html",
+                mode="served",
+                target_id=target_id,
+                points=points,
+                asr_spark=sparkline([p.asr_overall for p in points], ymax=1.0),
+                ch_spark=sparkline([p.critical_high for p in points]),
+                eval_spark=sparkline([p.eval_pass_rate_run for p in points], ymax=1.0),
+            )
+        )
 
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 

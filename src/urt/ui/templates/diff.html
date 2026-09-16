@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Redplane run diff{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Run diff</h1>
+<p class="note">Findings are matched across runs by <code>category + sub_category + target_id</code> (finding ids embed the run id). "New" = only in B, "resolved" = only in A, "persisting" = in both; counts and max severity per key are shown for A and B. Deltas are B − A. This is a comparison, never a grade.</p>
+<form class="filters" method="get" action="/ui/diff">
+  <label>A (baseline)
+    <select name="a">
+      <option value="">choose…</option>
+      {% for row in runs %}<option value="{{ row.run_id }}"{% if row.run_id == a %} selected{% endif %}>{{ row.name }} · {{ row.created_at }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>B (comparison — same target or same name prefix as A)
+    <select name="b">
+      {% if a %}
+      <option value="">choose…</option>
+      {% for row in candidates %}<option value="{{ row.run_id }}"{% if row.run_id == b %} selected{% endif %}>{{ row.name }} · {{ row.created_at }} · {{ (row.targets or []) | join(", ") }}</option>{% endfor %}
+      {% else %}
+      <option value="">choose A first</option>
+      {% endif %}
+    </select>
+  </label>
+  <button type="submit">{% if a and not b %}Pick A{% else %}Compare{% endif %}</button>
+</form>
+{% if unrelated %}
+<div class="banner">These two runs share no target and no name prefix; the comparison is shown because you asked for it, but new/resolved will mostly reflect different scopes rather than change.</div>
+{% endif %}
+{% if diff %}
+<div class="meta">
+  <span><strong>A:</strong> <a href="/ui/runs/{{ diff.run_a }}" class="mono">{{ diff.run_a }}</a></span>
+  <span><strong>B:</strong> <a href="/ui/runs/{{ diff.run_b }}" class="mono">{{ diff.run_b }}</a></span>
+  <a href="/v1/runs/{{ diff.run_a }}/diff/{{ diff.run_b }}">JSON</a>
+</div>
+<div class="tiles">
+  <div class="tile"><span class="tile-label">New</span><span class="tile-value">{{ diff.new | length }}</span></div>
+  <div class="tile"><span class="tile-label">Resolved</span><span class="tile-value">{{ diff.resolved | length }}</span></div>
+  <div class="tile"><span class="tile-label">Persisting</span><span class="tile-value">{{ diff.persisting | length }}</span></div>
+</div>
+
+<h2>Scorecard</h2>
+<table class="diff-table">
+  <thead><tr><th>Metric</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th></tr></thead>
+  <tbody>
+  {% for key, values in diff.scorecard_delta.items() %}
+    {% set kind = "pct" if key in ("asr_overall", "eval_pass_rate") else "int" %}
+    <tr>
+      <td>{{ key }}</td>
+      <td class="num">{{ values.a | pct if kind == "pct" else (values.a if values.a is not none else "—") }}</td>
+      <td class="num">{{ values.b | pct if kind == "pct" else (values.b if values.b is not none else "—") }}</td>
+      <td class="num delta">{{ values.delta | signed(kind) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="note">eval_pass_rate is the scorecard value; it is 0.0 when a run had no evaluators (see the eval table below for whether scores exist).</p>
+
+<h2>ASR by category</h2>
+{% if diff.asr_by_category_delta %}
+<table class="diff-table">
+  <thead><tr><th>Category</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th></tr></thead>
+  <tbody>
+  {% for key, values in diff.asr_by_category_delta.items() %}
+    <tr><td>{{ key }}</td><td class="num">{{ values.a | pct }}</td><td class="num">{{ values.b | pct }}</td><td class="num delta">{{ values.delta | signed("pct") }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No attack categories in either run.</p>{% endif %}
+
+{% macro group_table(title, groups, css) %}
+<h2>{{ title }} ({{ groups | length }})</h2>
+{% if groups %}
+<table class="diff-table {{ css }}">
+  <thead><tr><th>Target</th><th>Category</th><th>Sub-category</th><th class="num">Count A</th><th>Max sev A</th><th class="num">Count B</th><th>Max sev B</th><th></th></tr></thead>
+  <tbody>
+  {% for g in groups %}
+    <tr>
+      <td>{{ g.target_id }}</td>
+      <td>{{ g.category }}</td>
+      <td class="mono">{{ g.sub_category or "—" }}</td>
+      <td class="num">{{ g.count_a }}</td>
+      <td>{% if g.max_severity_a %}<span class="badge sev-{{ g.max_severity_a }}">{{ g.max_severity_a }}</span>{% else %}—{% endif %}</td>
+      <td class="num">{{ g.count_b }}</td>
+      <td>{% if g.max_severity_b %}<span class="badge sev-{{ g.max_severity_b }}">{{ g.max_severity_b }}</span>{% else %}—{% endif %}</td>
+      <td class="note">
+        {% if g.count_a %}<a href="/ui/runs/{{ diff.run_a }}/findings?category={{ g.category | urlencode }}&amp;sub_category={{ g.sub_category | urlencode }}&amp;target={{ g.target_id | urlencode }}">in A</a>{% endif %}
+        {% if g.count_b %}<a href="/ui/runs/{{ diff.run_b }}/findings?category={{ g.category | urlencode }}&amp;sub_category={{ g.sub_category | urlencode }}&amp;target={{ g.target_id | urlencode }}">in B</a>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">None.</p>{% endif %}
+{% endmacro %}
+{{ group_table("New in B", diff.new, "new") }}
+{{ group_table("Resolved (only in A)", diff.resolved, "resolved") }}
+{{ group_table("Persisting", diff.persisting, "persisting") }}
+
+<h2>Evaluation metrics</h2>
+{% if diff.eval_delta %}
+<table class="diff-table">
+  <thead><tr><th>Metric</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th></tr></thead>
+  <tbody>
+  {% for key, values in diff.eval_delta.items() %}
+    <tr><td>{{ key }}</td><td class="num">{{ values.a | num }}</td><td class="num">{{ values.b | num }}</td><td class="num delta">{{ values.delta | signed("num") }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">Neither run has evaluator scores.</p>{% endif %}
+{% elif a or b %}
+<p class="muted">Pick two runs that both have findings.</p>
+{% endif %}
+{% endblock %}

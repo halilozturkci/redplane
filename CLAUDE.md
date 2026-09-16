@@ -53,6 +53,7 @@ RunSpec → Orchestrator.execute()
 - `adapters/engines/_command.py` — `CommandEngineAdapter` base for CLI-wrapped tools (most engines subclass this)
 - `adapters/evaluators/_command.py` — `CommandEvaluatorAdapter` base for CLI-wrapped evaluators
 - `normalization/` — `normalize_findings()` (severity/category mapping) + `build_scorecard()` (aggregation including eval_scores)
+- `diff.py` — cross-run identity key (`category + sub_category + target_id`), `diff_runs()` → `RunDiff`, `TrendPoint` (backs `urt diff`, `/v1/runs/{a}/diff/{b}`, `/v1/targets/{id}/trend`)
 - `report.py` — `render_markdown()`, `render_csv()`, `gate_result()`/`GateResult`, `evaluate_gate()` (waiver-aware); `render_html()` is a thin shim over `ui/`
 - `ui/` — viewer: `bundle.py` (`load_bundle()` → `RunBundle`: read-time redaction for pre-1.1 bundles, evidence paths, waiver matching, transcripts), `render.py` (Jinja2 templates, `render_run_page(mode="static"|"served")`, hash CSP), `view_server.py` (`urt view`), `templates/`, `static/`
 - `artifact_policy.py` — inline-vs-attachment and header rules for serving bundle files (shared by the API and `urt view`)
@@ -74,7 +75,7 @@ An OpenAI-compatible proxy (`stdlib ThreadingHTTPServer`, not FastAPI) that rout
 
 ### CLI Commands
 
-`urt init`, `urt validate`, `urt probe`, `urt run`, `urt report` (`--in-place` re-renders the bundle's own reports), `urt gate` (`--explain`, `--eval-min-pass-rate`), `urt waivers` (`list`, `create`, `revoke` — append-only, no delete), `urt runs`, `urt findings`, `urt artifacts`, `urt view`, `urt serve-api`, `urt serve-gateway`
+`urt init`, `urt validate`, `urt probe`, `urt run`, `urt report` (`--in-place` re-renders the bundle's own reports), `urt gate` (`--explain`, `--eval-min-pass-rate`), `urt waivers` (`list`, `create`, `revoke` — append-only, no delete), `urt runs`, `urt diff <a> <b>`, `urt findings`, `urt artifacts`, `urt view`, `urt serve-api`, `urt serve-gateway`
 
 ### Runtime contracts (do not re-treat as schema-only)
 

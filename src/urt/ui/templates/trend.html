@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Redplane trend {{ target_id }}{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Trend: {{ target_id }}</h1>
+<p class="note">One point per run that included this target, oldest first. Severity counts and ASR are computed from this target's findings only; the eval pass rate is the run-level value (evaluator scores are not attributable to a target) and blank when the run had no evaluators. Context, not a grade: compare against the previous run, not an absolute scale. <a href="/v1/targets/{{ target_id | urlencode }}/trend">JSON</a></p>
+<div class="sparks">
+  <div class="spark-card">
+    <span class="tile-label">ASR overall (0–100%)</span>
+    {% set spark = asr_spark %}{% set spark_label = "ASR overall per run" %}{% include "partials/_sparkline.html" %}
+    <span class="mono">{{ points[-1].asr_overall | pct }}</span>
+  </div>
+  <div class="spark-card">
+    <span class="tile-label">Critical + high findings</span>
+    {% set spark = ch_spark %}{% set spark_label = "Critical plus high findings per run" %}{% include "partials/_sparkline.html" %}
+    <span class="mono">{{ points[-1].critical_high }}</span>
+  </div>
+  <div class="spark-card">
+    <span class="tile-label">Eval pass rate (run-level)</span>
+    {% set spark = eval_spark %}{% set spark_label = "Run-level eval pass rate per run" %}{% include "partials/_sparkline.html" %}
+    <span class="mono">{{ points[-1].eval_pass_rate_run | pct if points[-1].eval_pass_rate_run is not none else "—" }}</span>
+  </div>
+</div>
+<table class="trend-table">
+  <thead><tr><th>Run</th><th>Created</th><th>Status</th><th class="num">Findings</th><th class="num">Critical</th><th class="num">High</th><th class="num">ASR</th><th class="num">Attacks (success / total)</th><th class="num">Eval pass (run)</th><th></th></tr></thead>
+  <tbody>
+  {% for point in points %}
+    <tr>
+      <td><a href="/ui/runs/{{ point.run_id }}">{{ point.name }}</a><div class="note mono">{{ point.run_id }}</div></td>
+      <td class="mono">{{ point.created_at }}</td>
+      <td><span class="badge {{ 'ok' if point.status == 'completed' else 'fail' }}">{{ point.status }}</span></td>
+      <td class="num">{{ point.total_findings }}</td>
+      <td class="num">{{ point.critical }}</td>
+      <td class="num">{{ point.high }}</td>
+      <td class="num">{{ point.asr_overall | pct }}</td>
+      <td class="num">{{ point.success_count }} / {{ point.total_attacks }}</td>
+      <td class="num">{{ point.eval_pass_rate_run | pct if point.eval_pass_rate_run is not none else "—" }}</td>
+      <td class="note">{% if not loop.first %}<a href="/ui/diff?a={{ points[loop.index0 - 1].run_id | urlencode }}&amp;b={{ point.run_id | urlencode }}">diff vs previous</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

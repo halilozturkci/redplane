@@ -63,6 +63,58 @@ def _seconds(value: Any) -> str:
         return str(value)
 
 
+def _signed(value: Any, kind: str = "num") -> str:
+    """Delta with an explicit sign: ``kind`` is ``pct`` (fraction → %), ``int`` or ``num``."""
+    if value is None:
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number == 0:
+        return "±0"
+    sign = "+" if number > 0 else "−"
+    magnitude = abs(number)
+    if kind == "pct":
+        return f"{sign}{magnitude:.1%}"
+    if kind == "int":
+        return f"{sign}{int(magnitude)}"
+    return f"{sign}{magnitude:.4f}"
+
+
+SPARK_WIDTH = 180
+SPARK_HEIGHT = 40
+
+
+def sparkline(values: list[float | None], *, width: int = SPARK_WIDTH, height: int = SPARK_HEIGHT, ymax: float | None = None) -> dict[str, Any]:
+    """Coordinates for an inline SVG polyline (no chart library, no inline styles).
+
+    ``values`` are plotted left to right; None gaps are skipped. ``ymax`` fixes the
+    scale (e.g. 1.0 for rates); otherwise the max value (at least 1) is the top.
+    """
+    numeric = [None if v is None else float(v) for v in values]
+    present = [v for v in numeric if v is not None]
+    top = ymax if ymax is not None else max(present + [1.0])
+    pad = 3
+    inner_w, inner_h = width - 2 * pad, height - 2 * pad
+    step = inner_w / max(len(numeric) - 1, 1)
+    dots: list[tuple[float, float]] = []
+    for index, value in enumerate(numeric):
+        if value is None:
+            continue
+        x = pad + (index * step if len(numeric) > 1 else inner_w / 2)
+        y = pad + inner_h - (min(value, top) / top) * inner_h if top else pad + inner_h
+        dots.append((round(x, 1), round(y, 1)))
+    return {
+        "width": width,
+        "height": height,
+        "points": " ".join(f"{x},{y}" for x, y in dots),
+        "dots": dots,
+        "max": top,
+        "count": len(present),
+    }
+
+
 def json_script(payload: Any) -> Markup:
     """JSON safe to place inside ``<script type="application/json">``.
 
@@ -86,6 +138,7 @@ def _environment() -> Environment:
     env.filters["num"] = _num
     env.filters["seconds"] = _seconds
     env.filters["json_script"] = json_script
+    env.filters["signed"] = _signed
     env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True, default=str)
     env.globals["severity_levels"] = SEVERITY_LEVELS
     return env
