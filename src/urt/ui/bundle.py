@@ -19,21 +19,26 @@ from ..constants import (
     REPORT_METADATA_JSON_CAP,
     RUN_PROFILE_DEFAULTS,
     SEVERITY_ORDER,
-    SUPPORTED_EVALUATORS,
 )
+from ..normalization.kind import FINDING_KINDS, finding_kind
 from ..policy.waivers import matching_waiver, waiver_is_active
 from ..redaction import redact_bundle_payload
 from ..report import GateResult, gate_result, scorecard_eval_pass_rate, sort_findings
 from ..types import UnifiedFinding
 from .transcript import Turn, extract_transcript
 
-FINDING_KINDS = ("attack", "coverage_gap", "execution", "eval")
 FRAMEWORKS = ("owasp_llm", "owasp_agentic", "mitre_atlas")
 FRAMEWORK_LABELS = {
     "owasp_llm": "OWASP LLM Top 10 (2025)",
     "owasp_agentic": "OWASP Agentic (2026)",
     "mitre_atlas": "MITRE ATLAS",
 }
+MATRIX_NOTE = (
+    "Mappings are category-level heuristics (policy/mapping.py), not per-test verdicts. "
+    "An empty cell means no finding mapped there, not that the control is covered or safe. "
+    "Only attack findings count; coverage_gap, execution and eval findings are excluded."
+)
+_ = FINDING_KINDS  # re-exported for templates/tests that enumerate kinds
 ERROR_LOG_HEAD_LINES = 40
 LEGACY_ERROR_WITHHELD = (
     f"error text not shown for pre-{REDACTED_BUNDLE_MIN_VERSION} bundles "
@@ -106,12 +111,22 @@ class FrameworkCell:
     max_severity: str | None = None
     categories: set[str] = field(default_factory=set)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {"count": self.count, "max_severity": self.max_severity, "categories": sorted(self.categories)}
+
 
 @dataclass(slots=True)
 class FrameworkRow:
     label: str
     cells: dict[str, FrameworkCell]
     unmapped: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "unmapped": self.unmapped,
+            "cells": {target: cell.to_dict() for target, cell in self.cells.items()},
+        }
 
 
 @dataclass(slots=True)
@@ -120,6 +135,14 @@ class FrameworkMatrix:
     title: str
     targets: list[str]
     rows: list[FrameworkRow]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "framework": self.framework,
+            "title": self.title,
+            "targets": list(self.targets),
+            "rows": [row.to_dict() for row in self.rows],
+        }
 
 
 @dataclass(slots=True)
@@ -225,6 +248,30 @@ class RunBundle:
             )
         return matrices
 
+    def coverage(self) -> dict[str, Any]:
+        """JSON form of the framework matrices with the honesty label attached."""
+        matrices = self.framework_matrices()
+        # A category is "unmapped" for the run only when no framework maps it; a
+        # category that maps in OWASP LLM but not in ATLAS still shows in ATLAS's own
+        # unmapped row.
+        per_framework: list[set[str]] = []
+        for matrix in matrices:
+            missing: set[str] = set()
+            for row in matrix.rows:
+                if row.unmapped:
+                    for cell in row.cells.values():
+                        missing.update(cell.categories)
+            per_framework.append(missing)
+        unmapped = set.intersection(*per_framework) if per_framework else set()
+        return {
+            "run_id": self.run_id,
+            "note": MATRIX_NOTE,
+            "targets": self.targets,
+            "excluded_kinds": sorted(kind for kind in FINDING_KINDS if kind != "attack"),
+            "frameworks": [matrix.to_dict() for matrix in matrices],
+            "unmapped_categories": sorted(unmapped),
+        }
+
     def find(self, finding_id: str) -> FindingView | None:
         for view in self.findings:
             if view.finding_id == finding_id:
@@ -237,20 +284,6 @@ def _bump(cell: FrameworkCell, view: FindingView) -> None:
     cell.categories.add(str(view.record.get("category", "")))
     if cell.max_severity is None or SEVERITY_ORDER.get(view.severity, -1) > SEVERITY_ORDER.get(cell.max_severity, -1):
         cell.max_severity = view.severity
-
-
-def finding_kind(record: dict[str, Any]) -> str:
-    """attack / coverage_gap / execution / eval, derived until `finding_kind` lands upstream."""
-    category = str(record.get("category", "")).lower()
-    sub_category = str(record.get("sub_category") or "").lower()
-    metadata = record.get("metadata") or {}
-    if category == "coverage_gap" or sub_category == "engine_skipped" or metadata.get("status") == "skipped":
-        return "coverage_gap"
-    if category == "execution" or str(record.get("attack_vector", "")).lower() == "tool_runtime":
-        return "execution"
-    if str(record.get("engine", "")).lower() in SUPPORTED_EVALUATORS:
-        return "eval"
-    return "attack"
 
 
 def _relative_evidence(run_dir: Path | None, ref: str) -> str | None:

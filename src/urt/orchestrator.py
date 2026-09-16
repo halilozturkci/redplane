@@ -621,6 +621,18 @@ class Orchestrator:
             return None
         return redact_bundle_payload(content, legacy=not self.bundle_is_redacted(run_id))
 
+    def coverage(self, run_id: str) -> dict[str, Any] | None:
+        """Framework coverage matrix (targets × OWASP LLM / Agentic / ATLAS labels) as JSON."""
+        if not self.metadata_store.get_run(run_id):
+            return None
+        try:
+            run_dir = self.artifact_store.existing_run_dir(run_id)
+        except ValueError:
+            return None
+        if run_dir is None:
+            return None
+        return load_bundle(run_dir, waivers=self.list_waivers()).coverage()
+
     def bundle_format_version(self, run_id: str) -> str | None:
         manifest = self.artifact_store.read_json(run_id, "run_manifest.json")
         if not isinstance(manifest, dict):

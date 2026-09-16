@@ -1,4 +1,4 @@
-<p class="note">Mappings are category-level heuristics (<code>policy/mapping.py</code>), not per-test verdicts. An empty cell means no finding mapped there, not that the control is covered or safe. Only attack findings count; execution and coverage-gap findings are excluded.</p>
+<p class="note">Mappings are category-level heuristics (<code>policy/mapping.py</code>), not per-test verdicts. An empty cell means no finding mapped there, not that the control is covered or safe. Only attack findings count; coverage-gap, execution and eval findings are excluded. Engine-specific category spellings are folded onto canonical keys (e.g. <code>hateunfairness</code> → <code>hate_unfairness</code>); categories with no mapping stay visible in the <em>unmapped</em> row instead of vanishing.{% if mode == "served" %} <a href="/v1/runs/{{ run_id }}/coverage">JSON</a>{% endif %}</p>
 {% for matrix in matrices %}
 <h3>{{ matrix.title }}</h3>
 {% if matrix.rows %}
@@ -7,7 +7,7 @@
   <tbody>
   {% for row in matrix.rows %}
     <tr class="{{ 'unmapped' if row.unmapped else '' }}">
-      <td>{{ row.label }}</td>
+      <td>{{ row.label }}{% if row.unmapped %} <span class="note">{% for target in matrix.targets %}{% set cell = row.cells.get(target) %}{% if cell and cell.count %}{{ cell.categories | sort | join(", ") }}{% endif %}{% endfor %}</span>{% endif %}</td>
       {% for target in matrix.targets %}
       {% set cell = row.cells.get(target) %}
       {% if cell and cell.count %}

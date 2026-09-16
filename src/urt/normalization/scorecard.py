@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ..constants import SEVERITY_ORDER
 from ..types import UnifiedFinding, UnifiedScorecard
+from .kind import ASR_KINDS, finding_kind
 
 if TYPE_CHECKING:
     from ..types import EvalRunResult
@@ -21,9 +22,10 @@ def build_scorecard(
     severity_counter = Counter(f.severity for f in findings)
     engine_counter = Counter(f.engine for f in findings)
 
-    attack_findings = [
-        f for f in findings if f.attack_vector not in {"tool_runtime", "n/a"}
-    ]
+    # ASR allowlist (idea 4): only `attack` kind findings describe the target's
+    # behaviour; coverage gaps, launcher failures, healthchecks and evaluator
+    # metrics must not move the attack success rate either way.
+    attack_findings = [f for f in findings if finding_kind(f) in ASR_KINDS]
     success_count = sum(1 for f in attack_findings if f.success)
     total_attacks = len(attack_findings)
 
