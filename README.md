@@ -1464,6 +1464,14 @@ deliberately small and local-first:
   `GET /v1/runs/{id}` / `/stages` read them. Stages are discrete events — engine X
   on target Y started / completed — never a percentage: the orchestrator has no
   total unit of work, and the gateway SSE shim is not a token stream.
+- **Stopping `serve-api` stops the attack.** Engine and evaluator tools run in their
+  own process group (`runtime.run_tool_process`, `start_new_session=True`). On a graceful
+  shutdown the worker starts nothing more (still-queued rows are marked
+  `failed: interrupted … queued`), asks the run in flight to stop at its next stage
+  boundary and kills the tool's whole process group — the tool, `uvx`, Node workers,
+  everything it spawned — so nothing keeps hitting the target re-parented to PID 1 with
+  no audit trail. The run is recorded `failed: interrupted … running` with its partial
+  bundle. The same group kill applies on an engine timeout and on Ctrl-C in `urt run`.
 - **Crash recovery, not resumption.** When a control-plane process starts it marks
   every `queued`/`running` row whose worker process is gone (same host, dead pid; or
   unknowable and untouched for 24 h) as `failed` with an explicit `interrupted:` message,

@@ -217,7 +217,7 @@ def test_command_engine_injects_runtime_env(tmp_path: Path, monkeypatch):
         captured["env"] = kwargs["env"]
         return SimpleNamespace(returncode=0, stdout="ok-stdout", stderr="")
 
-    monkeypatch.setattr("urt.adapters.engines._command.subprocess.run", fake_run)
+    monkeypatch.setattr("urt.adapters.engines._command.run_tool_process", fake_run)
     adapter = GarakEngineAdapter(EngineSpec.from_dict({"name": "garak", "params": {"command": ["garak", "--version"]}}))
     context = _engine_context(tmp_path)
     result = adapter._result_from_command(context, ["garak", "--version"], artifact_name_prefix="garak")
@@ -477,3 +477,35 @@ def test_gateway_api_key_rejects_unauthorized(tmp_path: Path):
     finally:
         server.shutdown()
         thread.join(timeout=5)
+
+
+def test_tool_process_timeout_kills_the_whole_process_group(tmp_path: Path):
+    import os
+    import subprocess
+    import sys
+    import time
+
+    from urt.runtime import ACTIVE_TOOL_PROCESSES, run_tool_process
+
+    marker = tmp_path / "grandchild.pid"
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_tool_process([sys.executable, "-c", script], timeout_seconds=1.5)
+    assert ACTIVE_TOOL_PROCESSES.active() == []
+    grandchild = int(marker.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        if Path(f"/proc/{grandchild}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("grandchild survived the timeout kill")
