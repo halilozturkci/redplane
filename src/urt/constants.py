@@ -63,6 +63,10 @@ SEVERITY_ORDER = {
     "critical": 4,
 }
 
+# 1.0: initial bundle. 1.1: resolved_spec.json / run_manifest.json are written
+# with target auth and sensitive keys redacted.
+BUNDLE_FORMAT_VERSION = "1.1"
+
 AUDIT_BUNDLE_FILES = (
     "resolved_spec.json",
     "run_manifest.json",

@@ -14,9 +14,11 @@ from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
 from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
+from .redaction import redact_run_spec_payload
 from .report import evaluate_gate, load_findings, render_csv, render_html, render_markdown
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
+from .gateway.redaction import redact_payload
 
 
 def _template_payload() -> dict[str, Any]:
@@ -145,7 +147,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     spec = load_run_spec(args.spec)
-    print(json.dumps(spec.to_dict(), indent=2, ensure_ascii=False))
+    print(json.dumps(redact_run_spec_payload(spec.to_dict()), indent=2, ensure_ascii=False))
     print("Validation OK")
     return 0
 
@@ -322,7 +324,7 @@ def cmd_serve_gateway(args: argparse.Namespace) -> int:
         config.gateway.port = int(args.port)
 
     if args.print_effective_config:
-        print(json.dumps(config.to_dict(), indent=2, ensure_ascii=False))
+        print(json.dumps(redact_payload(config.to_dict()), indent=2, ensure_ascii=False))
 
     serve_gateway(config)
     return 0

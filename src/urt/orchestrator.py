@@ -15,8 +15,14 @@ from .adapters import create_engine_adapter, create_evaluator_adapter, create_ta
 from .adapters.engine_base import EngineContext
 from .adapters.evaluator_base import EvalContext
 from .audit import build_artifacts_index
-from .constants import AUDIT_BUNDLE_FILES, DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
+from .constants import (
+    AUDIT_BUNDLE_FILES,
+    BUNDLE_FORMAT_VERSION,
+    DEFAULT_ARTIFACT_ROOT,
+    DEFAULT_METADATA_DB,
+)
 from .normalization import build_scorecard, normalize_findings
+from .redaction import redact_run_spec_payload
 from .report import render_csv, render_html, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
@@ -57,7 +63,9 @@ class Orchestrator:
             updated_at=now,
         )
         self.metadata_store.create_run(run_record)
-        self.artifact_store.write_json(run_id, "resolved_spec.json", spec.to_dict())
+        # The in-memory spec holds expanded `${VAR}` credentials; the bundle must not.
+        redacted_spec = redact_run_spec_payload(spec.to_dict())
+        self.artifact_store.write_json(run_id, "resolved_spec.json", redacted_spec)
 
         run_started = perf_counter()
         all_findings: list[UnifiedFinding] = []
@@ -262,10 +270,10 @@ class Orchestrator:
                 "created_at": now,
                 "completed_at": self._utc_now(),
                 "duration_seconds": round(run_duration, 4),
-                "bundle_format_version": "1.0",
+                "bundle_format_version": BUNDLE_FORMAT_VERSION,
                 "required_bundle_files": list(AUDIT_BUNDLE_FILES),
-                "targets": [asdict(t) for t in spec.targets],
-                "engines": [asdict(e) for e in spec.engines],
+                "targets": redacted_spec["targets"],
+                "engines": redacted_spec["engines"],
                 "policy_profiles": spec.policy_profiles,
                 "target_probe_results": target_probe_results,
                 "engine_invocation_count": len(engine_invocations),
@@ -325,6 +333,7 @@ class Orchestrator:
                     "status": "failed",
                     "created_at": now,
                     "failed_at": self._utc_now(),
+                    "bundle_format_version": BUNDLE_FORMAT_VERSION,
                     "error": str(exc),
                     "target_probe_results": target_probe_results,
                     "engine_invocations": engine_invocations,
