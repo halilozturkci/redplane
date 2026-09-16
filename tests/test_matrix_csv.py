@@ -133,6 +133,25 @@ def test_coverage_csv_matches_the_json_matrix_and_neutralises_formula_cells(rich
     assert not any(field.startswith(("=", "+", "-", "@")) for r in rows for field in r.values())
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["=HYPERLINK(1)", "+1", "-2+3", "@SUM(A1)", "\t=x", "\r=x", "|cmd", "  =x", " \t+1", "\u00a0=x"],
+)
+def test_csv_safe_neutralises_formula_and_pipe_prefixes_after_leading_whitespace(value: str):
+    from urt.coverage_csv import csv_safe
+
+    safe = csv_safe(value)
+    assert safe.startswith("'")
+    assert safe.endswith(value)
+
+
+@pytest.mark.parametrize("value", ["plain", "prompt injection", "a=b", "x|y", "", None])
+def test_csv_safe_leaves_ordinary_text_alone(value):
+    from urt.coverage_csv import csv_safe
+
+    assert csv_safe(value) == ("" if value is None else value)
+
+
 def test_coverage_csv_endpoint_and_link(client: TestClient, two_runs):
     bundle, _ = two_runs
     response = client.get(f"/v1/runs/{bundle.run_id}/coverage.csv")

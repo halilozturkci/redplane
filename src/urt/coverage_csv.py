@@ -27,12 +27,14 @@ COVERAGE_CSV_COLUMNS = (
     "basis",
 )
 BASIS = "category-level heuristic"
-_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+# `|` is the DDE prefix some spreadsheets honour; leading whitespace (including the
+# non-breaking space) is stripped by several importers before the formula check.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "|")
 
 
 def csv_safe(value: Any) -> str:
     text = "" if value is None else str(value)
-    if text.startswith(_FORMULA_PREFIXES):
+    if text.startswith(_FORMULA_PREFIXES) or text.lstrip().startswith(_FORMULA_PREFIXES):
         return "'" + text
     return text
 
