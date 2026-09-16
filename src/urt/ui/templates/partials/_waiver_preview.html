@@ -1,0 +1,17 @@
+<div id="waiver-preview" class="preview">
+  <h4>Preview</h4>
+  <p>A waiver for control <span class="mono">{{ preview.control_id }}</span> on target <span class="mono">{{ preview.target_id }}</span>
+    matches {{ preview.count }} finding{{ "" if preview.count == 1 else "s" }} in this run
+    <span class="note">(same <code>control_matches()</code> rules as the gate; expiry not considered)</span>.</p>
+  {% if preview.matches %}
+  <ul>
+  {% for row in preview.matches %}
+    <li>
+      <span class="badge sev-{{ row.severity | lower }}">{{ row.severity }}</span>
+      <a href="/ui/runs/{{ preview.run_id }}/findings?finding_id={{ row.finding_id | urlencode }}" class="mono">{{ row.finding_id }}</a>
+      <div class="note">{{ row.target_id }} · {{ row.engine }} · {{ row.category }}{% if row.sub_category %} / {{ row.sub_category }}{% endif %}</div>
+    </li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+</div>

@@ -183,12 +183,22 @@ class GateResult:
     waived: list[dict[str, Any]] = field(default_factory=list)
     # True when waivers were supplied to the evaluation (not: a waiver matched).
     waivers_considered: bool = False
+    # Optional evaluator floor (idea 2). `eval_ok` is None when no minimum was requested,
+    # False when the scorecard has no evaluator scores at all (never silently passed).
+    eval_min_pass_rate: float | None = None
+    eval_pass_rate: float | None = None
+    eval_ok: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "GateResult":
+        def _opt_float(key: str) -> float | None:
+            value = payload.get(key)
+            return None if value is None else float(value)
+
+        eval_ok = payload.get("eval_ok")
         return cls(
             ok=bool(payload["ok"]),
             threshold=str(payload["threshold"]),
@@ -196,10 +206,37 @@ class GateResult:
             blocking=list(payload.get("blocking", [])),
             waived=list(payload.get("waived", [])),
             waivers_considered=bool(payload.get("waivers_considered", False)),
+            eval_min_pass_rate=_opt_float("eval_min_pass_rate"),
+            eval_pass_rate=_opt_float("eval_pass_rate"),
+            eval_ok=None if eval_ok is None else bool(eval_ok),
         )
 
 
-def _gate_finding_row(finding: UnifiedFinding) -> dict[str, Any]:
+def scorecard_eval_pass_rate(scorecard: dict[str, Any] | None) -> float | None:
+    """The scorecard's `eval_pass_rate`, or None when the run had no evaluator scores
+    (`build_scorecard` writes 0.0 in that case, which must not read as "0% passed")."""
+    if not scorecard or not scorecard.get("eval_scores"):
+        return None
+    try:
+        return float(scorecard.get("eval_pass_rate", 0.0))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_eval_min_pass_rate(raw: Any) -> float | None:
+    """Parse a user-supplied evaluator floor; None for absent/blank, ValueError otherwise."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"eval_min_pass_rate must be a number between 0 and 1, got {raw!r}") from exc
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"eval_min_pass_rate must be between 0 and 1, got {value}")
+    return value
+
+
+def gate_finding_row(finding: UnifiedFinding) -> dict[str, Any]:
     return {
         "finding_id": finding.finding_id,
         "severity": finding.severity,
@@ -220,11 +257,14 @@ def gate_result(
     threshold: str = "high",
     *,
     waivers: list[dict[str, Any]] | None = None,
+    eval_min_pass_rate: float | None = None,
+    eval_pass_rate: float | None = None,
 ) -> GateResult:
     threshold_key = threshold.lower()
     threshold_value = SEVERITY_ORDER.get(threshold_key)
     if threshold_value is None:
         raise ValueError(f"Unsupported threshold: {threshold}")
+    eval_min = parse_eval_min_pass_rate(eval_min_pass_rate)
     threshold_name = threshold_key.upper()
     active_waivers = list(waivers or [])
 
@@ -238,7 +278,7 @@ def gate_result(
         if matched:
             waived.append(
                 {
-                    **_gate_finding_row(finding),
+                    **gate_finding_row(finding),
                     "waiver_id": matched.get("waiver_id"),
                     "control_id": matched.get("control_id"),
                     "owner": matched.get("owner"),
@@ -246,28 +286,52 @@ def gate_result(
                 }
             )
             continue
-        blocking.append(_gate_finding_row(finding))
+        blocking.append(gate_finding_row(finding))
 
     blocking.sort(key=_severity_sort_key)
     waived.sort(key=_severity_sort_key)
 
+    waived_note = f" ({len(waived)} waived)" if waived else ""
     if blocking:
-        waived_note = f" ({len(waived)} waived)" if waived else ""
-        message = f"Gate failed: at least one finding severity >= {threshold_name}{waived_note}"
+        findings_clause = f"at least one finding severity >= {threshold_name}{waived_note}"
     elif waived:
-        message = (
-            f"Gate passed: {len(waived)} finding(s) waived, none remaining severity >= {threshold_name}"
-        )
+        findings_clause = f"{len(waived)} finding(s) waived, none remaining severity >= {threshold_name}"
     else:
-        message = f"Gate passed: no findings severity >= {threshold_name}"
+        findings_clause = f"no findings severity >= {threshold_name}"
+
+    eval_ok: bool | None = None
+    eval_clause = ""
+    if eval_min is not None:
+        if eval_pass_rate is None:
+            eval_ok = False
+            eval_clause = f"eval pass rate unavailable (no evaluator scores), minimum {eval_min:.1%} required"
+        elif eval_pass_rate >= eval_min:
+            eval_ok = True
+            eval_clause = f"eval pass rate {eval_pass_rate:.1%} >= minimum {eval_min:.1%}"
+        else:
+            eval_ok = False
+            eval_clause = f"eval pass rate {eval_pass_rate:.1%} below minimum {eval_min:.1%}"
+
+    ok = not blocking and eval_ok is not False
+    if ok:
+        message = f"Gate passed: {findings_clause}" + (f"; {eval_clause}" if eval_clause else "")
+    elif blocking and eval_ok is False:
+        message = f"Gate failed: {findings_clause}; {eval_clause}"
+    elif blocking:
+        message = f"Gate failed: {findings_clause}"
+    else:
+        message = f"Gate failed: {eval_clause} ({findings_clause})"
 
     return GateResult(
-        ok=not blocking,
+        ok=ok,
         threshold=threshold_key,
         message=message,
         blocking=blocking,
         waived=waived,
         waivers_considered=bool(active_waivers),
+        eval_min_pass_rate=eval_min,
+        eval_pass_rate=eval_pass_rate,
+        eval_ok=eval_ok,
     )
 
 

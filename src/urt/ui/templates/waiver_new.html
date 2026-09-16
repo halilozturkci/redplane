@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Redplane new waiver{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>New waiver</h1>
+{% if finding %}
+<p class="note">From finding <span class="mono">{{ finding.finding_id }}</span>
+  (<span class="badge sev-{{ finding.severity }}">{{ finding.severity }}</span>
+  {{ finding.record.get("category", "") }}{% if finding.record.get("sub_category") %} / {{ finding.record.get("sub_category") }}{% endif %}
+  on {{ finding.record.get("target_id", "") }}). Pick how broadly the waiver should match.</p>
+{% endif %}
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+<form method="post" action="/ui/waivers" class="waiver-form">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+  {% if run_id %}<input type="hidden" name="run_id" value="{{ run_id }}">{% endif %}
+  {# The preview trigger sits on a div, not the form: htmx validates forms before
+     requesting, and reason/owner are still empty while the operator picks a control. #}
+  <div class="preview-source"{% if run_id %} hx-get="/ui/runs/{{ run_id | urlencode }}/waiver-preview" hx-target="#waiver-preview" hx-swap="outerHTML" hx-trigger="change" hx-include="[name='target_id'],[name='control_id']" hx-push-url="false"{% endif %}>
+  <label>Target id
+    <input type="text" name="target_id" value="{{ values.target_id }}" required placeholder="target id or * for any">
+  </label>
+  <fieldset>
+    <legend>Control id</legend>
+    {% if control_choices %}
+      {% for label, value in control_choices %}
+      <label class="choice"><input type="radio" name="control_id" value="{{ value }}"{% if values.control_id == value %} checked{% endif %} required> <span class="muted">{{ label }}</span> <span class="mono">{{ value }}</span></label>
+      {% endfor %}
+    {% else %}
+      <input type="text" name="control_id" value="{{ values.control_id }}" required placeholder="category, sub_category, finding id or framework label">
+    {% endif %}
+  </fieldset>
+  </div>
+  <label>Reason
+    <input type="text" name="reason" required value="{{ values.reason }}" placeholder="ticket, compensating control, accepted risk…">
+  </label>
+  <label>Owner
+    <input type="text" name="owner" required value="{{ values.owner }}" placeholder="who accepts this risk">
+  </label>
+  <label>Expires at (ISO-8601, default +30 days)
+    <input type="text" name="expires_at" value="{{ values.expires_at }}" required class="mono">
+  </label>
+  <div class="actions">
+    {% if run_id %}
+    <button type="submit" formmethod="get" formaction="/ui/waivers/new" formnovalidate>Preview matches</button>
+    {% endif %}
+    <button type="submit">Create waiver</button>
+    <a href="/ui/waivers{% if run_id %}?run_id={{ run_id | urlencode }}{% endif %}">Cancel</a>
+  </div>
+</form>
+{% if run_id %}
+  {% if preview is not none %}
+    {% include "partials/_waiver_preview.html" %}
+  {% else %}
+  <div id="waiver-preview" class="preview"><p class="muted">Choose a control id to preview which findings of this run the waiver would match.</p></div>
+  {% endif %}
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

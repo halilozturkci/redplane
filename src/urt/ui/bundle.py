@@ -23,7 +23,7 @@ from ..constants import (
 )
 from ..policy.waivers import matching_waiver, waiver_is_active
 from ..redaction import redact_bundle_payload
-from ..report import GateResult, gate_result, sort_findings
+from ..report import GateResult, gate_result, scorecard_eval_pass_rate, sort_findings
 from ..types import UnifiedFinding
 from .transcript import Turn, extract_transcript
 
@@ -166,11 +166,19 @@ class RunBundle:
                 seen.append(target)
         return seen
 
-    def gate(self, threshold: str | None = None, *, ignore_waivers: bool = False) -> GateResult:
+    def gate(
+        self,
+        threshold: str | None = None,
+        *,
+        ignore_waivers: bool = False,
+        eval_min_pass_rate: float | None = None,
+    ) -> GateResult:
         return gate_result(
             self._unified,
             threshold=threshold or self.default_threshold,
             waivers=[] if ignore_waivers else self.waivers,
+            eval_min_pass_rate=eval_min_pass_rate,
+            eval_pass_rate=scorecard_eval_pass_rate(self.scorecard),
         )
 
     def gates(self) -> dict[str, GateResult]:

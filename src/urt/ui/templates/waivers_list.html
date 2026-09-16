@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Redplane waivers{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Waivers</h1>
+<p class="note">
+  A waiver suppresses matching findings from the gate until <code>expires_at</code>. It never edits or
+  deletes a finding. Revoking sets the expiry to now; the row and its history stay (append-only).
+  Matching follows <code>control_matches()</code>: exact match on category, sub-category, finding id,
+  engine, attack vector or a framework label, or a <code>"X "</code>/<code>"X:"</code> prefix of one.
+</p>
+<form class="filters" method="get" action="/ui/waivers">
+  <label>Run (for match preview)
+    <select name="run_id">
+      <option value="">none</option>
+      {% for row in runs %}
+      <option value="{{ row.run_id }}"{% if row.run_id == run_id %} selected{% endif %}>{{ row.name }} · {{ row.run_id }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Show
+    <select name="show">
+      {% for value, label in [("all", "all"), ("active", "active"), ("expired", "expired")] %}
+      <option value="{{ value }}"{% if show == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Apply</button>
+  <a href="/ui/waivers/new{% if run_id %}?run_id={{ run_id | urlencode }}{% endif %}">New waiver</a>
+</form>
+{% if run_id %}
+<p class="note">Preview against run <a href="/ui/runs/{{ run_id }}" class="mono">{{ run_id }}</a>: counts use the gate's matching rules on the findings of this run and ignore expiry, so expired waivers show what they <em>would</em> match if extended.</p>
+{% endif %}
+{% if waivers %}
+<table class="waivers-table">
+  <thead>
+    <tr>
+      <th>Waiver</th><th>Target</th><th>Control</th><th>Owner</th><th>Reason</th><th>Expires</th><th>State</th>
+      {% if run_id %}<th>Preview</th>{% endif %}
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in waivers %}
+    <tr>
+      <td class="mono">{{ row.waiver_id }}</td>
+      <td>{{ row.target_id }}</td>
+      <td class="mono">{{ row.control_id }}</td>
+      <td>{{ row.owner }}</td>
+      <td>{{ row.reason }}</td>
+      <td class="mono">{{ row.expires_at }}</td>
+      <td>{% if row.active %}<span class="badge ok">active</span>{% else %}<span class="badge skipped">expired</span>{% endif %}</td>
+      {% if run_id %}
+      <td>
+        {% set n = previews.get(row.waiver_id) %}
+        {% if n is none %}<span class="muted">no findings yet</span>
+        {% else %}<a href="/ui/runs/{{ run_id }}/findings?q={{ row.control_id | urlencode }}">matches {{ n }} finding{{ "" if n == 1 else "s" }} in this run</a>{% endif %}
+      </td>
+      {% endif %}
+      <td>
+        {% if row.active %}
+        <form method="post" action="/ui/waivers/{{ row.waiver_id | urlencode }}/revoke" class="inline">
+          <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+          {% if run_id %}<input type="hidden" name="run_id" value="{{ run_id }}">{% endif %}
+          <button type="submit" title="Set expires_at to now; the waiver stays in the audit history">Revoke</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No waivers stored{% if show != "all" %} in this state{% endif %}.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

@@ -67,6 +67,21 @@ def target_matches(finding: UnifiedFinding, target_id: str) -> bool:
     return finding.target_id == wanted
 
 
+def preview_matches(
+    findings: list[UnifiedFinding],
+    *,
+    control_id: str,
+    target_id: str,
+) -> list[UnifiedFinding]:
+    """Findings a waiver with this `control_id`/`target_id` would apply to, using the
+    exact `control_matches` / `target_matches` rules the gate uses (expiry aside)."""
+    return [
+        finding
+        for finding in findings
+        if target_matches(finding, target_id) and control_matches(finding, control_id)
+    ]
+
+
 def matching_waiver(
     finding: UnifiedFinding,
     waivers: list[dict[str, Any]],

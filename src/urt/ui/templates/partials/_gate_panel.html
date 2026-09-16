@@ -19,8 +19,12 @@
         </select>
       </label>
       <label><input type="checkbox" name="ignore_waivers" value="true"{% if ignore_waivers %} checked{% endif %}> ignore waivers</label>
+      <label>Min eval pass rate
+        <input type="number" name="eval_min_pass_rate" min="0" max="1" step="0.01" value="{{ eval_min_pass_rate }}" placeholder="0.8" title="Fraction 0..1; fails when the run has no evaluator scores">
+      </label>
       <noscript><button type="submit">Apply</button></noscript>
     </form>
+    <a class="note" href="/ui/waivers?run_id={{ run_id | urlencode }}">Waivers ({{ waivers | length }} active)</a>
     {% endif %}
   </div>
   {% if mode == "static" %}

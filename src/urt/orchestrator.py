@@ -26,8 +26,17 @@ from .constants import (
     SEVERITY_ORDER,
 )
 from .normalization import build_scorecard, normalize_findings
+from .policy.waivers import parse_expiry, preview_matches, waiver_is_active
 from .redaction import REDACTED, Scrubber, redact_bundle_payload, redact_run_spec_payload
-from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
+from .report import (
+    GateResult,
+    gate_finding_row,
+    gate_result,
+    load_findings,
+    render_csv,
+    render_markdown,
+    scorecard_eval_pass_rate,
+)
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
 from .types import EngineRunResult, EvalRunResult, RunRecord, RunSpec, UnifiedFinding
@@ -639,6 +648,7 @@ class Orchestrator:
         *,
         threshold: str = "high",
         ignore_waivers: bool = False,
+        eval_min_pass_rate: float | None = None,
     ) -> GateResult | None:
         """Structured gate verdict for a run; None when findings are not available yet."""
         run = self.metadata_store.get_run(run_id)
@@ -649,14 +659,65 @@ class Orchestrator:
             return None
         findings = load_findings(findings_path)
         waivers = [] if ignore_waivers else self.list_waivers()
-        return gate_result(findings, threshold=threshold, waivers=waivers)
+        return gate_result(
+            findings,
+            threshold=threshold,
+            waivers=waivers,
+            eval_min_pass_rate=eval_min_pass_rate,
+            eval_pass_rate=scorecard_eval_pass_rate(self.artifact_store.read_json(run_id, "scorecard.json")),
+        )
 
     def create_waiver(self, waiver_payload: dict[str, Any]) -> dict[str, Any]:
         from .types import WaiverRecord
 
         waiver = WaiverRecord(**waiver_payload)
+        if parse_expiry(waiver.expires_at) is None:
+            raise ValueError(f"expires_at must be an ISO-8601 timestamp, got {waiver.expires_at!r}")
         self.metadata_store.create_waiver(waiver)
-        return asdict(waiver)
+        return self._with_active(asdict(waiver))
 
     def list_waivers(self, target_id: str | None = None) -> list[dict[str, Any]]:
         return self.metadata_store.list_waivers(target_id)
+
+    @staticmethod
+    def _with_active(waiver: dict[str, Any]) -> dict[str, Any]:
+        return {**waiver, "active": waiver_is_active(waiver)}
+
+    def get_waiver(self, waiver_id: str) -> dict[str, Any] | None:
+        """One waiver with its `active` flag and append-only `events` history."""
+        row = self.metadata_store.get_waiver(waiver_id)
+        if row is None:
+            return None
+        return {**self._with_active(row), "events": self.metadata_store.list_waiver_events(waiver_id)}
+
+    def update_waiver_expiry(self, waiver_id: str, expires_at: str) -> dict[str, Any] | None:
+        if parse_expiry(expires_at) is None:
+            raise ValueError(f"expires_at must be an ISO-8601 timestamp, got {expires_at!r}")
+        row = self.metadata_store.update_waiver_expiry(waiver_id, expires_at, event="expiry_changed")
+        return None if row is None else self._with_active(row)
+
+    def revoke_waiver(self, waiver_id: str, *, note: str | None = None) -> dict[str, Any] | None:
+        """Revoke = expire now, terminally. The row stays (append-only audit); the gate stops
+        applying it; later expiry changes raise `WaiverRevokedError`."""
+        row = self.metadata_store.update_waiver_expiry(waiver_id, self._utc_now(), event="revoked", note=note)
+        return None if row is None else self._with_active(row)
+
+    def waiver_preview(
+        self,
+        run_id: str,
+        *,
+        control_id: str,
+        target_id: str,
+    ) -> list[dict[str, Any]] | None:
+        """Findings of `run_id` a waiver with these ids would match (same `control_matches`
+        rules as the gate). None when the run has no findings file yet."""
+        run = self.metadata_store.get_run(run_id)
+        if not run:
+            return None
+        findings_path = run.get("findings_path")
+        if not findings_path or not Path(findings_path).exists():
+            return None
+        matches = preview_matches(load_findings(findings_path), control_id=control_id, target_id=target_id)
+        rows = [gate_finding_row(finding) for finding in matches]
+        rows.sort(key=lambda row: (-SEVERITY_ORDER.get(str(row["severity"]).lower(), -1), str(row["finding_id"])))
+        return rows

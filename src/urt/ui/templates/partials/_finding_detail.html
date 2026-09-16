@@ -21,6 +21,9 @@
   <div class="note">{{ view.waiver.reason }}</div>
 </div>
 {% endif %}
+{% if mode == "served" %}
+<p class="note"><a href="/ui/waivers/new?run_id={{ run_id | urlencode }}&amp;finding_id={{ view.finding_id | urlencode }}">Create waiver from this finding</a></p>
+{% endif %}
 {% if view.mapping_chips %}
 <h4>Framework mappings</h4>
 <div class="chips">

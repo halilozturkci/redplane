@@ -103,6 +103,9 @@ ARTIFACT_RESPONSE_HEADERS = {
     "Cache-Control": "no-store",
 }
 
+# Pre-filled expiry when a waiver is created from the UI (§4.6: "+30 days").
+WAIVER_DEFAULT_EXPIRY_DAYS = 30
+
 # Per-finding cap on the pretty-printed `metadata` JSON embedded in report.html.
 # Larger payloads are truncated with a link to the raw artifact.
 REPORT_METADATA_JSON_CAP = 4096

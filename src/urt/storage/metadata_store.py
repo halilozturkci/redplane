@@ -5,11 +5,20 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from ..constants import SEVERITY_ORDER
 from ..types import RunRecord, UnifiedFinding, WaiverRecord
+
+
+class WaiverExistsError(ValueError):
+    """A waiver with this id already exists; waivers are append-only and never rewritten."""
+
+
+class WaiverRevokedError(ValueError):
+    """The waiver has been revoked; revoke is terminal (extend = create a new waiver)."""
 
 
 class MetadataStore:
@@ -69,8 +78,22 @@ class MetadataStore:
                     owner TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS waiver_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    waiver_id TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    at TEXT NOT NULL,
+                    expires_at_before TEXT,
+                    expires_at_after TEXT,
+                    note TEXT
+                );
                 """
             )
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     def create_run(self, record: RunRecord) -> None:
         with self._connect() as conn:
@@ -201,9 +224,17 @@ class MetadataStore:
     def create_waiver(self, waiver: WaiverRecord) -> None:
         payload = asdict(waiver)
         with self._connect() as conn:
+            previous = conn.execute(
+                "SELECT expires_at FROM waivers WHERE waiver_id = ?", (payload["waiver_id"],)
+            ).fetchone()
+            if previous is not None:
+                raise WaiverExistsError(
+                    f"waiver {payload['waiver_id']!r} already exists; waivers are append-only "
+                    "(revoke it and create a new one instead of rewriting it)"
+                )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO waivers (
+                INSERT INTO waivers (
                     waiver_id, target_id, control_id, reason, owner, expires_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
@@ -216,6 +247,90 @@ class MetadataStore:
                     payload["expires_at"],
                 ),
             )
+            self._record_waiver_event(
+                conn,
+                waiver_id=payload["waiver_id"],
+                event="created",
+                expires_at_before=None,
+                expires_at_after=payload["expires_at"],
+                note=None,
+            )
+
+    def _record_waiver_event(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        waiver_id: str,
+        event: str,
+        expires_at_before: str | None,
+        expires_at_after: str | None,
+        note: str | None,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO waiver_events (waiver_id, event, at, expires_at_before, expires_at_after, note)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (waiver_id, event, self._utc_now(), expires_at_before, expires_at_after, note),
+        )
+
+    def get_waiver(self, waiver_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT waiver_id, target_id, control_id, reason, owner, expires_at FROM waivers WHERE waiver_id = ?",
+                (waiver_id,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def update_waiver_expiry(
+        self,
+        waiver_id: str,
+        expires_at: str,
+        *,
+        event: str = "expiry_changed",
+        note: str | None = None,
+    ) -> dict | None:
+        """Change only `expires_at` (revoke = set it to now) and append an audit event.
+
+        Waivers are never deleted: the row and its history stay readable. Returns the
+        updated row, or None when the waiver does not exist. Revoke is terminal: once
+        a `revoked` event exists no further change is accepted (`WaiverRevokedError`).
+        """
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT expires_at FROM waivers WHERE waiver_id = ?", (waiver_id,)
+            ).fetchone()
+            if current is None:
+                return None
+            revoked = conn.execute(
+                "SELECT 1 FROM waiver_events WHERE waiver_id = ? AND event = 'revoked' LIMIT 1", (waiver_id,)
+            ).fetchone()
+            if revoked is not None:
+                raise WaiverRevokedError(
+                    f"waiver {waiver_id!r} is revoked; revoke is terminal — create a new waiver "
+                    "with a fresh reason and owner instead"
+                )
+            conn.execute("UPDATE waivers SET expires_at = ? WHERE waiver_id = ?", (expires_at, waiver_id))
+            self._record_waiver_event(
+                conn,
+                waiver_id=waiver_id,
+                event=event,
+                expires_at_before=current["expires_at"],
+                expires_at_after=expires_at,
+                note=note,
+            )
+        return self.get_waiver(waiver_id)
+
+    def list_waiver_events(self, waiver_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_id, waiver_id, event, at, expires_at_before, expires_at_after, note
+                FROM waiver_events WHERE waiver_id = ? ORDER BY event_id ASC
+                """,
+                (waiver_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_waivers(self, target_id: str | None = None) -> list[dict]:
         with self._connect() as conn:
