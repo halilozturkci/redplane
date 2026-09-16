@@ -114,12 +114,12 @@ Each request produces one trace artifact containing:
 - Response body + status.
 - Error payload when present.
 
-Redaction applies to standard sensitive keys and configured header list. The
+Redaction applies to standard sensitive keys (`authorization`, `api-key`, `token`, `secret`, `password`, `cookie` / `set-cookie`, …) and the configured header list. The
 `metadata.audit_path` returned to the client is **relative to `audit.artifact_root`**
 (`YYYYMMDD/trace-….json`), never the server's filesystem layout.
 
 The control plane reads this tree read-only: `Orchestrator` records the linked
-`trace_ids` (and how each matched) in `run_manifest.json` at the end of a run;
+`trace_ids` (exact `X-URT-Run-Id` matches) and `gateway_traces` (`by_run_id`, `by_time_window`, `all_trace_ids`) in `run_manifest.json` at the end of a run;
 `urt serve-api` browses it under `GET /v1/traces…` and `/ui/traces` with the gateway
 down. Point `URT_GATEWAY_TRACE_ROOT` / `--gateway-trace-root` at `audit.artifact_root`
 when it is not the default `.urt_state/gateway`.

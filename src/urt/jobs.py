@@ -14,6 +14,12 @@ process marks them `failed` with an explicit "interrupted" message
 bundles) or leaving them `running` forever. Rows record `worker_id`
 (`<hostname>:<pid>`) so that recovery only touches runs whose process is gone and
 never a run that `urt run` is executing right now in another process.
+
+Shutdown is explicit rather than left to recovery: `stop()` refuses to start further
+queued runs (their rows are marked `failed: interrupted` right away), asks the run in
+flight to stop at its next stage boundary, kills the tool's process group so no engine
+keeps attacking the target after the control plane is gone, and records the run as
+interrupted if `execute` did not get to.
 """
 
 from __future__ import annotations
@@ -25,12 +31,14 @@ import socket
 import threading
 from typing import TYPE_CHECKING, Any
 
+from .runtime import ACTIVE_TOOL_PROCESSES
+
 if TYPE_CHECKING:  # pragma: no cover
     from .orchestrator import Orchestrator
     from .types import RunSpec
 
 _log = logging.getLogger("urt.jobs")
-_STOP = object()
+_POLL_SECONDS = 0.2
 
 
 def current_worker_id() -> str:
@@ -69,9 +77,11 @@ class RunWorker:
 
     def __init__(self, orchestrator: "Orchestrator") -> None:
         self._orchestrator = orchestrator
-        self._queue: queue.Queue[Any] = queue.Queue()
+        self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._stopping = threading.Event()
+        self._current_run_id: str | None = None
         self.worker_id = current_worker_id()
 
     @staticmethod
@@ -80,22 +90,17 @@ class RunWorker:
 
     def start(self) -> None:
         with self._lock:
+            if self._stopping.is_set():
+                return
             if self._thread is not None and self._thread.is_alive():
                 return
             self._thread = threading.Thread(target=self._loop, name="urt-run-worker", daemon=True)
             self._thread.start()
 
-    def stop(self, *, timeout: float | None = None) -> None:
-        """Ask the thread to exit after the run it is executing (if any) and join it."""
-        with self._lock:
-            thread = self._thread
-        if thread is None or not thread.is_alive():
-            return
-        self._queue.put(_STOP)
-        thread.join(timeout)
-
     def submit(self, spec: "RunSpec") -> str:
         """Record the run as `queued` and hand it to the worker. Returns the run id."""
+        if self._stopping.is_set():
+            raise RuntimeError("the run worker is shutting down; the run was not queued")
         run_id = self._orchestrator.enqueue_run(spec, worker_id=self.worker_id)
         self._queue.put((run_id, spec))
         self.start()
@@ -105,14 +110,51 @@ class RunWorker:
     def pending(self) -> int:
         return self._queue.qsize()
 
-    def _loop(self) -> None:
+    @property
+    def current_run_id(self) -> str | None:
+        return self._current_run_id
+
+    def stop(self, *, timeout: float | None = None) -> None:
+        """Shut down: start nothing more, fail the still-queued rows, interrupt the run in
+        flight (kill its tool process group), join the thread, and make sure that run is
+        recorded as interrupted rather than left `running` for the next process to find."""
+        from .orchestrator import STOPPED_MESSAGE
+
+        self._stopping.set()
+        with self._lock:
+            thread = self._thread
+        current = self._current_run_id
+        if current is not None:
+            self._orchestrator.interrupt_run(current)
+            killed = ACTIVE_TOOL_PROCESSES.terminate_all()
+            if killed:
+                _log.warning("run %s: terminated tool process groups %s on shutdown", current, killed)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout)
         while True:
-            item = self._queue.get()
-            if item is _STOP:
+            try:
+                run_id, _spec = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            self._orchestrator.mark_run_failed(run_id, STOPPED_MESSAGE.format(status="queued"))
+        if current is not None:
+            self._orchestrator.mark_run_failed(current, STOPPED_MESSAGE.format(status="running"))
+
+    def _loop(self) -> None:
+        while not self._stopping.is_set():
+            try:
+                run_id, spec = self._queue.get(timeout=_POLL_SECONDS)
+            except queue.Empty:
+                continue
+            if self._stopping.is_set():
+                # Never start a run during shutdown; `stop()` fails the row explicitly.
+                self._queue.put((run_id, spec))
                 return
-            run_id, spec = item
+            self._current_run_id = run_id
             try:
                 self._orchestrator.execute(spec, run_id=run_id, worker_id=self.worker_id)
             except Exception:  # noqa: BLE001 - execute records its own failures; this is the last resort
                 _log.exception("run %s raised outside execute()", run_id)
                 self._orchestrator.mark_run_failed(run_id, "worker error: see server log")
+            finally:
+                self._current_run_id = None

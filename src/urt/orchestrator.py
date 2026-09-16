@@ -70,6 +70,14 @@ INTERRUPTED_MESSAGE = (
     "interrupted: the process executing this run exited before it finished "
     "(status was {status}); the bundle on disk is partial and the run was not re-executed"
 )
+STOPPED_MESSAGE = (
+    "interrupted: the control plane was stopped while this run was {status}; the engine process "
+    "group was terminated, the bundle on disk is partial and the run was not re-executed"
+)
+
+
+class RunInterrupted(RuntimeError):
+    """Raised inside `execute` when the run was asked to stop (control-plane shutdown)."""
 
 
 class StageLog:
@@ -103,6 +111,16 @@ class Orchestrator:
         self.gateway_traces = TraceIndex(
             gateway_trace_root or os.environ.get(GATEWAY_TRACE_ROOT_ENV) or DEFAULT_GATEWAY_TRACE_ROOT
         )
+        self._interrupt_requested: set[str] = set()
+
+    def interrupt_run(self, run_id: str) -> None:
+        """Ask a run executing in this process to stop at its next stage boundary (the
+        worker also kills the tool process group, so the boundary comes quickly)."""
+        self._interrupt_requested.add(run_id)
+
+    def _check_interrupted(self, run_id: str) -> None:
+        if run_id in self._interrupt_requested:
+            raise RunInterrupted(STOPPED_MESSAGE.format(status="running"))
 
     @staticmethod
     def _utc_now() -> str:
@@ -232,6 +250,7 @@ class Orchestrator:
                 try:
                     target_engine_results: list[EngineRunResult] = []
                     for engine_spec in spec.engines:
+                        self._check_interrupted(run_id)
                         budget.check(stage=f"before engine {engine_spec.name} on {target_spec.target_id}")
                         engine_adapter = create_engine_adapter(engine_spec)
                         context = EngineContext(
@@ -254,6 +273,8 @@ class Orchestrator:
                         result = self._safe_run_engine(engine_adapter, context)
                         invocation_duration = perf_counter() - invocation_started
                         invocation_ended_at = self._utc_now()
+                        # A killed tool must not pass as an ordinary fail_open failure.
+                        self._check_interrupted(run_id)
                         stages.record(
                             "engine",
                             result.status,
@@ -303,6 +324,7 @@ class Orchestrator:
                     target_findings = [f for f in all_findings if f.target_id == target_spec.target_id]
 
                     for evaluator_spec in spec.evaluators:
+                        self._check_interrupted(run_id)
                         budget.check(
                             stage=f"before evaluator {evaluator_spec.name} on {target_spec.target_id}"
                         )
@@ -331,6 +353,7 @@ class Orchestrator:
                         )
                         stages.record("evaluator", "started", evaluator=evaluator_spec.name, target_id=target_spec.target_id)
                         eval_result = self._safe_run_evaluator(evaluator_adapter, eval_context)
+                        self._check_interrupted(run_id)
                         stages.record(
                             "evaluator",
                             eval_result.status,
@@ -416,10 +439,10 @@ class Orchestrator:
                 "engine_invocation_count": len(engine_invocations),
                 "finding_count": len(normalized),
                 "budget": budget.snapshot(),
-                # Gateway traces this run produced (idea 3): exact `run_id` tags plus the
-                # weaker time-window join, each listed under its own key.
+                # Gateway traces this run produced (idea 3). `trace_ids` = exact `run_id`
+                # tags only; the weaker time-window join stays labelled inside `gateway_traces`.
                 "gateway_traces": gateway_link,
-                "trace_ids": gateway_link["trace_ids"],
+                "trace_ids": gateway_link["by_run_id"],
                 "report_paths": {
                     "markdown": str(run_root / "report.md"),
                     "html": str(run_root / "report.html"),
@@ -484,7 +507,7 @@ class Orchestrator:
                     "engine_invocations": engine_invocations,
                     "budget": budget.snapshot(),
                     "gateway_traces": gateway_link,
-                    "trace_ids": gateway_link["trace_ids"],
+                    "trace_ids": gateway_link["by_run_id"],
                 },
             )
             self._write_failure_reports(run_id, store)
@@ -494,14 +517,17 @@ class Orchestrator:
                 "error": error_message,
                 "error_log_path": error_path,
             }
+        finally:
+            self._interrupt_requested.discard(run_id)
 
     # --- run lifecycle bookkeeping (async submissions, crash recovery) ---
 
     def mark_run_failed(self, run_id: str, message: str) -> None:
         """Record a failure for a run whose `execute` never got to write one (worker
-        error, interrupted process). Writes a failed manifest unless one exists."""
+        error, interrupted process). Writes a failed manifest unless one exists. A row
+        that is already terminal is left as it is."""
         row = self.metadata_store.get_run(run_id)
-        if row is None:
+        if row is None or row.get("status") in TERMINAL_RUN_STATUSES:
             return
         now = self._utc_now()
         self.metadata_store.update_run(run_id, status="failed", updated_at=now, error_message=message)
@@ -579,8 +605,14 @@ class Orchestrator:
         manifest = self.artifact_store.read_json(run_id, "run_manifest.json") or {}
         link = manifest.get("gateway_traces") if isinstance(manifest.get("gateway_traces"), dict) else None
         if link is None:
-            link = {"trace_root": str(self.gateway_traces.root), "window": None, "by_run_id": [], "by_time_window": [], "trace_ids": []}
-        return {"run_id": run_id, **link, "traces": self.gateway_traces.summaries_for(link)}
+            link = {"window": None, "by_run_id": [], "by_time_window": [], "all_trace_ids": []}
+        return {
+            "run_id": run_id,
+            "trace_root": str(self.gateway_traces.root),
+            **link,
+            "trace_ids": list(link.get("by_run_id") or []),
+            "traces": self.gateway_traces.summaries_for(link),
+        }
 
     def stage_events(self, run_id: str) -> list[dict[str, Any]] | None:
         """Orchestrator stage events so far; None for an unknown run, [] before it starts."""

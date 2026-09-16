@@ -35,13 +35,13 @@ class TracePathError(ValueError):
 
 
 def check_day(day: str) -> str:
-    if not DAY_RE.match(day or ""):
+    if not DAY_RE.fullmatch(day or ""):
         raise TracePathError("day must be YYYYMMDD")
     return day
 
 
 def check_trace_id(trace_id: str) -> str:
-    if not TRACE_ID_RE.match(trace_id or ""):
+    if not TRACE_ID_RE.fullmatch(trace_id or ""):
         raise TracePathError("trace id must be 32 lowercase hex characters")
     return trace_id
 
@@ -84,7 +84,7 @@ class TraceIndex:
         if not self.root.is_dir():
             return []
         return sorted(
-            (p for p in self.root.iterdir() if p.is_dir() and not p.is_symlink() and DAY_RE.match(p.name)),
+            (p for p in self.root.iterdir() if p.is_dir() and not p.is_symlink() and DAY_RE.fullmatch(p.name)),
             key=lambda p: p.name,
             reverse=True,
         )
@@ -95,7 +95,7 @@ class TraceIndex:
             return []
         files: list[TraceFile] = []
         for path in day_dir.iterdir():
-            match = TRACE_FILE_RE.match(path.name)
+            match = TRACE_FILE_RE.fullmatch(path.name)
             if match is None or not path.is_file() or path.is_symlink():
                 continue
             files.append(TraceFile(day=day, path=path, stamp=_stamp_to_datetime(match["stamp"]), trace_id=match["trace_id"]))
@@ -173,7 +173,9 @@ class TraceIndex:
         """Trace ids linked to `run_id`. Only the day directories the run's window touches
         are scanned. A trace **tagged** with this run id counts wherever it sits on those
         days (`by_run_id`, exact); an **untagged** trace counts only inside `[started,
-        ended]` (`by_time_window`, weaker). Traces tagged for another run are skipped."""
+        ended]` (`by_time_window`, weaker). Traces tagged for another run are skipped.
+        `all_trace_ids` is the union; the manifest's top-level `trace_ids` is `by_run_id`
+        only, because a window guess is not evidence that the request belonged to the run."""
         start = _parse_iso(started_at)
         end = _parse_iso(ended_at)
         by_run_id: list[str] = []
@@ -193,18 +195,17 @@ class TraceIndex:
                     elif not tagged and start <= item.stamp <= end:
                         by_window.append(item.trace_id)
         return {
-            "trace_root": str(self.root),
             "window": {"from": started_at, "to": ended_at},
             "by_run_id": sorted(by_run_id),
             "by_time_window": sorted(by_window),
-            "trace_ids": sorted(set(by_run_id) | set(by_window)),
+            "all_trace_ids": sorted(set(by_run_id) | set(by_window)),
         }
 
     def summaries_for(self, link: dict[str, Any]) -> list[dict[str, Any]]:
         """Summary rows for a `traces_for_run` result, each with its `link` kind."""
         rows: list[dict[str, Any]] = []
         tagged = set(link.get("by_run_id") or [])
-        for trace_id in link.get("trace_ids") or []:
+        for trace_id in link.get("all_trace_ids") or []:
             if not TRACE_ID_RE.match(str(trace_id)):
                 continue
             payload = self.get(str(trace_id))

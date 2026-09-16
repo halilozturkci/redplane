@@ -96,13 +96,13 @@ def test_trace_index_lists_days_filters_and_reads_details_as_stored(trace_root: 
     assert index.get("0" * 32) is None
 
 
-@pytest.mark.parametrize("day", ["../20260916", "2026091", "20260916x", "..", "", "2026/0916"])
+@pytest.mark.parametrize("day", ["../20260916", "2026091", "20260916x", "..", "", "2026/0916", "20260916\n"])
 def test_trace_index_rejects_malformed_day_segments(trace_root: Path, day: str):
     with pytest.raises(TracePathError):
         TraceIndex(trace_root).list_day(day)
 
 
-@pytest.mark.parametrize("trace_id", ["../x", "abc", "X" * 32, "0" * 31, "../../etc/passwd"])
+@pytest.mark.parametrize("trace_id", ["../x", "abc", "X" * 32, "0" * 31, "../../etc/passwd", "0" * 32 + "\n"])
 def test_trace_index_rejects_malformed_trace_ids(trace_root: Path, trace_id: str):
     with pytest.raises(TracePathError):
         TraceIndex(trace_root).get(trace_id)
@@ -124,8 +124,10 @@ def test_traces_for_run_matches_by_run_id_tag_and_by_time_window(trace_root: Pat
     # Untagged traces inside the window are offered as a weaker, time-based join; a
     # trace tagged with another run is not.
     assert link["by_time_window"] == [TID[3]]
-    assert link["trace_ids"] == sorted([TID[2], TID[3]])
+    assert link["all_trace_ids"] == sorted([TID[2], TID[3]])
+    assert "trace_ids" not in link  # the exact key is the manifest's, derived from by_run_id
     assert link["window"] == {"from": window_start.isoformat(), "to": window_end.isoformat()}
+    assert "trace_root" not in link  # a configured server path does not belong in the bundle
 
 
 def test_gateway_audit_store_records_run_id_and_relative_audit_path(tmp_path: Path):
@@ -134,6 +136,29 @@ def test_gateway_audit_store_records_run_id_and_relative_audit_path(tmp_path: Pa
     assert not Path(relative).is_absolute()
     assert relative.endswith(f"-{'f' * 32}.json")
     assert (tmp_path / "gw" / relative).is_file()
+
+
+def test_gateway_audit_store_redacts_cookie_headers_by_default(tmp_path: Path):
+    """S2: the trace browser displays stored request headers, so session cookies must never
+    be stored verbatim."""
+    store = GatewayAuditStore(GatewayAuditConfig(artifact_root=str(tmp_path / "gw")))
+    relative = store.write_trace(
+        "e" * 32,
+        {
+            "trace_id": "e" * 32,
+            "request": {
+                "headers": {"Cookie": "sid=super-secret-session; theme=dark", "X-URT-Target": "mcs", "Authorization": "Bearer abc"},
+                "body": {},
+            },
+            "response": {"headers": {"Set-Cookie": "sid=rotated; HttpOnly"}, "body": {}},
+        },
+    )
+    stored = json.loads((tmp_path / "gw" / relative).read_text(encoding="utf-8"))
+    assert stored["request"]["headers"]["Cookie"] == "***REDACTED***"
+    assert stored["request"]["headers"]["Authorization"] == "***REDACTED***"
+    assert stored["request"]["headers"]["X-URT-Target"] == "mcs"
+    assert stored["response"]["headers"]["Set-Cookie"] == "***REDACTED***"
+    assert "super-secret-session" not in json.dumps(stored) and "rotated" not in json.dumps(stored)
 
 
 def _gateway(tmp_path: Path, backend_base: str, *, api_key: str | None = None, persist: bool = False) -> GatewayConfig:
@@ -282,16 +307,19 @@ def test_run_manifest_records_gateway_trace_ids_and_runtime_env_carries_the_run_
     assert result["status"] == "completed"
 
     manifest = json.loads((tmp_path / "artifacts" / run_id / "run_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["trace_ids"] == sorted([TID[1], TID[2]])
+    # S3: the manifest's `trace_ids` is the exact join only; the window join stays inside
+    # `gateway_traces`, labelled, with the union under its own key.
+    assert manifest["trace_ids"] == [TID[1]]
     assert manifest["gateway_traces"]["by_run_id"] == [TID[1]]
     assert manifest["gateway_traces"]["by_time_window"] == [TID[2]]
-    assert manifest["gateway_traces"]["trace_root"] == str(root)
-    assert str(tmp_path) not in json.dumps(manifest["gateway_traces"]["by_run_id"])
+    assert manifest["gateway_traces"]["all_trace_ids"] == sorted([TID[1], TID[2]])
+    assert "trace_root" not in manifest["gateway_traces"]
+    assert str(tmp_path) not in json.dumps(manifest["gateway_traces"])
 
     linked = orchestrator.run_traces(run_id)
-    assert linked["trace_ids"] == manifest["trace_ids"]
-    assert [row["trace_id"] for row in linked["traces"]] == manifest["trace_ids"]
-    assert linked["traces"][0]["link"] in {"run_id", "time_window"}
+    assert linked["trace_ids"] == [TID[1]]
+    assert linked["all_trace_ids"] == sorted([TID[1], TID[2]])
+    assert [(row["trace_id"], row["link"]) for row in linked["traces"]] == [(TID[1], "run_id"), (TID[2], "time_window")]
 
     context = EngineContext(
         run_id=run_id,
@@ -317,8 +345,10 @@ def test_failed_run_manifest_also_records_trace_ids(tmp_path: Path):
     result = orchestrator.execute(RunSpec.from_dict(spec))
     assert result["status"] == "failed"
     manifest = json.loads((tmp_path / "artifacts" / result["run_id"] / "run_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["trace_ids"] == sorted([TID[2], TID[5]])
+    assert manifest["trace_ids"] == []  # nothing was tagged; window guesses are not "this run's traces"
     assert manifest["gateway_traces"]["by_run_id"] == []
+    assert manifest["gateway_traces"]["by_time_window"] == sorted([TID[2], TID[5]])
+    assert manifest["gateway_traces"]["all_trace_ids"] == sorted([TID[2], TID[5]])
 
 
 # --- control-plane API and /ui pages -------------------------------------------------------
@@ -426,10 +456,11 @@ def test_ui_trace_pages_render_escaped_and_link_runs_to_their_traces(api, tmp_pa
     assert orchestrator.execute(spec, run_id=run_id)["status"] == "completed"
     run_page = client.get(f"/ui/runs/{run_id}")
     assert f'href="/ui/traces?run_id={run_id}"' in run_page.text
-    assert "Gateway traces (1)" in run_page.text
+    assert "Gateway traces (1 exact + 0 by window)" in run_page.text
     linked = client.get("/ui/traces", params={"run_id": run_id})
     assert linked.status_code == 200
     assert TID[6] in linked.text and "run_id" in linked.text
     api_linked = client.get(f"/v1/runs/{run_id}/traces").json()
     assert api_linked["trace_ids"] == [TID[6]]
+    assert api_linked["all_trace_ids"] == [TID[6]]
     assert api_linked["traces"][0]["link"] == "run_id"

@@ -15,6 +15,8 @@ DEFAULT_SENSITIVE_KEYS = (
     "password",
     "client_secret",
     "bearer_token",
+    # Session cookies: the control-plane trace browser displays stored request headers.
+    "cookie",  # also matches set-cookie
 )
 
 
