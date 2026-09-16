@@ -201,6 +201,22 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Findings not available for run")
         return result.to_dict()
 
+    @app.get("/v1/runs/{run_a}/diff/{run_b}")
+    def get_diff(run_a: str, run_b: str) -> dict[str, Any]:
+        _require_run(run_a)
+        _require_run(run_b)
+        diff = orch.diff(run_a, run_b)
+        if diff is None:
+            raise HTTPException(status_code=404, detail="Findings not available for one of the runs")
+        return diff.to_dict()
+
+    @app.get("/v1/targets/{target_id}/trend")
+    def get_trend(target_id: str) -> dict[str, Any]:
+        points = orch.trend(target_id)
+        if not points:
+            raise HTTPException(status_code=404, detail="No runs with findings for this target")
+        return {"target_id": target_id, "points": [point.to_dict() for point in points]}
+
     @app.post("/v1/waivers")
     def create_waiver(payload: dict[str, Any]) -> dict[str, Any]:
         required = ["target_id", "control_id", "reason", "owner", "expires_at"]

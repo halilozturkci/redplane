@@ -25,6 +25,7 @@ from .constants import (
     RUN_PROFILE_DEFAULTS,
     SEVERITY_ORDER,
 )
+from .diff import RunDiff, TrendPoint, diff_runs
 from .normalization import build_scorecard, normalize_findings
 from .policy.waivers import parse_expiry, preview_matches, waiver_is_active
 from .redaction import REDACTED, Scrubber, redact_bundle_payload, redact_run_spec_payload
@@ -666,6 +667,65 @@ class Orchestrator:
             eval_min_pass_rate=eval_min_pass_rate,
             eval_pass_rate=scorecard_eval_pass_rate(self.artifact_store.read_json(run_id, "scorecard.json")),
         )
+
+    def _run_findings(self, run_id: str) -> list[UnifiedFinding] | None:
+        run = self.metadata_store.get_run(run_id)
+        if not run:
+            return None
+        findings_path = run.get("findings_path")
+        if not findings_path or not Path(findings_path).exists():
+            return None
+        return load_findings(findings_path)
+
+    def diff(self, run_a: str, run_b: str) -> RunDiff | None:
+        """Compare two runs' findings and scorecards; None when either has no findings yet."""
+        findings_a = self._run_findings(run_a)
+        findings_b = self._run_findings(run_b)
+        if findings_a is None or findings_b is None:
+            return None
+        return diff_runs(
+            run_a,
+            findings_a,
+            self.artifact_store.read_json(run_a, "scorecard.json"),
+            run_b,
+            findings_b,
+            self.artifact_store.read_json(run_b, "scorecard.json"),
+        )
+
+    def trend(self, target_id: str) -> list[TrendPoint]:
+        """Per-run numbers for one target, oldest first. Empty when no run has findings
+        for that target (the caller decides whether that is a 404)."""
+        points: list[TrendPoint] = []
+        for row in self.metadata_store.list_runs():
+            findings = self._run_findings(row["run_id"])
+            if findings is None:
+                continue
+            summary = self.artifact_store.read_json(row["run_id"], "run_summary.json") or {}
+            declared = {str(t) for t in summary.get("targets") or []}
+            mine = [f for f in findings if f.target_id == target_id]
+            if not mine and target_id not in declared:
+                continue
+            per_target = build_scorecard(row["run_id"], mine)
+            points.append(
+                TrendPoint(
+                    run_id=row["run_id"],
+                    name=str(row.get("name", "")),
+                    created_at=str(row.get("created_at", "")),
+                    status=str(row.get("status", "")),
+                    total_findings=per_target.total_findings,
+                    critical=per_target.critical,
+                    high=per_target.high,
+                    critical_high=per_target.critical + per_target.high,
+                    asr_overall=per_target.asr_overall,
+                    success_count=per_target.success_count,
+                    total_attacks=per_target.total_attacks,
+                    eval_pass_rate_run=scorecard_eval_pass_rate(
+                        self.artifact_store.read_json(row["run_id"], "scorecard.json")
+                    ),
+                )
+            )
+        points.sort(key=lambda point: point.created_at)
+        return points
 
     def create_waiver(self, waiver_payload: dict[str, Any]) -> dict[str, Any]:
         from .types import WaiverRecord

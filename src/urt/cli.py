@@ -11,6 +11,7 @@ from typing import Any
 
 from .config import dump_run_spec, load_run_spec
 from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
+from .diff import render_diff_text
 from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
@@ -288,6 +289,23 @@ def cmd_runs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diff(args: argparse.Namespace) -> int:
+    orchestrator = _orchestrator(args)
+    for run_id in (args.run_a, args.run_b):
+        if not orchestrator.get_run(run_id):
+            print(f"Run not found: {run_id}", file=sys.stderr)
+            return 1
+    diff = orchestrator.diff(args.run_a, args.run_b)
+    if diff is None:
+        print("One of the runs has no findings yet", file=sys.stderr)
+        return 1
+    if args.format == "text":
+        print(render_diff_text(diff))
+    else:
+        print(json.dumps(diff.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_findings(args: argparse.Namespace) -> int:
     orchestrator = _orchestrator(args)
     print(json.dumps(orchestrator.get_findings(args.run_id), indent=2, ensure_ascii=False))
@@ -504,6 +522,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_runs = sub.add_parser("runs", help="List runs")
     p_runs.set_defaults(func=cmd_runs)
+
+    p_diff = sub.add_parser(
+        "diff", help="Compare two runs: new / resolved / persisting findings (category+sub_category+target), scorecard and eval deltas"
+    )
+    p_diff.add_argument("run_a", help="Baseline (older) run ID")
+    p_diff.add_argument("run_b", help="Comparison (newer) run ID")
+    p_diff.add_argument("--format", default="json", choices=["json", "text"])
+    p_diff.set_defaults(func=cmd_diff)
 
     p_findings = sub.add_parser("findings", help="List normalized findings for run")
     p_findings.add_argument("--run-id", required=True, help="Run ID")
