@@ -30,20 +30,33 @@ VIEWER_HEADERS = {
     "Cache-Control": "no-store",
     "Referrer-Policy": "no-referrer",
 }
-# Fallback for a report.html rendered before the viewer existed (no CSP meta, inline
-# style only, no script).
+# Strict fallback for any report.html the viewer did not recognisably render itself
+# (pre-viewer pages: inline style only, no script). Scripts stay blocked by default-src.
 LEGACY_REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'"
 _CSP_META = re.compile(rb'<meta http-equiv="Content-Security-Policy" content="([^"]*)"', re.I)
+# The exact shape `render.static_csp` emits; anything else is not ours.
+_VIEWER_CSP_SHAPE = re.compile(
+    r"^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/]+=*'; style-src 'sha256-[A-Za-z0-9+/]+=*'; "
+    r"base-uri 'none'; form-action 'none'$"
+)
 
 
 def viewer_csp_header(page: bytes) -> str:
     """The page's own CSP meta as a response header, plus `frame-ancestors 'none'`.
 
-    The hashes in the meta belong to the inline script/style of *that* file, so
-    they are read from it rather than recomputed from the current package assets.
+    Only a meta in the `<head>` (before the first `<body`) that matches the exact
+    policy shape the viewer renders is echoed — the hashes belong to that file's
+    inline script/style. Attacker text lives in the body of pre-Phase-0 pages and
+    may carry its own permissive meta; that never becomes the header. Anything
+    else falls back to `LEGACY_REPORT_CSP`.
     """
-    match = _CSP_META.search(page)
-    policy = match.group(1).decode("utf-8", errors="replace") if match else LEGACY_REPORT_CSP
+    head = page.split(b"<body", 1)[0]
+    match = _CSP_META.search(head)
+    policy = LEGACY_REPORT_CSP
+    if match:
+        candidate = match.group(1).decode("utf-8", errors="replace")
+        if _VIEWER_CSP_SHAPE.match(candidate):
+            policy = candidate
     return f"{policy}; frame-ancestors 'none'"
 
 
