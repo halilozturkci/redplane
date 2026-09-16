@@ -137,6 +137,80 @@ def test_validate_returns_errors_redacted_spec_defaults_and_env_status(client: T
     assert client.post("/v1/specs/validate", json={"yaml": "x" * (300 * 1024)}).status_code == 413
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda s: s["targets"][0].__setitem__("type", "${REDPLANE_TEST_TOKEN}"),
+        lambda s: s["engines"][0].__setitem__("name", "${REDPLANE_TEST_TOKEN}"),
+        lambda s: s.__setitem__("evaluators", [{"name": "${REDPLANE_TEST_TOKEN}"}]),
+        lambda s: s.__setitem__("run_profile", "${REDPLANE_TEST_TOKEN}"),
+        lambda s: s.__setitem__("evidence_level", "${REDPLANE_TEST_TOKEN}"),
+        lambda s: s.__setitem__("seed", "${REDPLANE_TEST_TOKEN}"),
+    ],
+    ids=["target_type", "engine_name", "evaluator_name", "run_profile", "evidence_level", "seed"],
+)
+def test_validate_errors_never_echo_an_expanded_variable_value(client: TestClient, mutate):
+    """M1: enum validators lower-case and echo the offending value; a `${VAR}` there must
+    surface as the token, never as the environment value (in any letter case)."""
+    spec = _spec()
+    mutate(spec)
+    response = client.post("/v1/specs/validate", json={"spec": spec})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False and body["errors"]
+    assert SECRET.lower() not in response.text.lower()
+    assert body["resolved_spec"] is None
+    assert body["env_vars"] == [{"name": "REDPLANE_TEST_TOKEN", "set": True}]
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/specs").text).group(1)
+    import yaml
+
+    page = client.post("/ui/specs/validate", data={"yaml": yaml.safe_dump(spec), "csrf_token": token})
+    assert page.status_code == 200
+    assert "Validation failed" in page.text
+    assert SECRET.lower() not in page.text.lower()
+
+
+def test_validate_keeps_working_when_a_variable_is_used_legitimately_in_a_numeric_field(client: TestClient, monkeypatch):
+    monkeypatch.setenv("REDPLANE_SEED", "4242")
+    spec = _spec(seed="${REDPLANE_SEED}")
+    body = client.post("/v1/specs/validate", json={"spec": spec}).json()
+    assert body["ok"] is True
+    assert body["resolved_spec"]["seed"] == 4242  # short, non-secret numeric values are not scrubbed
+    assert body["env_vars"] == [{"name": "REDPLANE_SEED", "set": True}, {"name": "REDPLANE_TEST_TOKEN", "set": True}]
+
+
+def test_yaml_aliases_are_rejected_instead_of_expanded(client: TestClient):
+    """Alias bombs bypass the byte cap (a 467-byte document expanded for 34 s of CPU).
+    RunSpecs have no use for anchors/aliases, so the loader refuses them outright."""
+    import time
+
+    levels = ["a0: &a0 [x, x, x, x, x, x, x, x, x]"]
+    for depth in range(1, 9):
+        levels.append(f"a{depth}: &a{depth} [" + ", ".join(f"*a{depth - 1}" for _ in range(9)) + "]")
+    bomb = "\n".join(levels) + "\n"
+    assert len(bomb.encode()) < 1024
+
+    started = time.perf_counter()
+    response = client.post("/v1/specs/validate", json={"yaml": bomb})
+    assert time.perf_counter() - started < 2.0
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert any("alias" in err.lower() for err in body["errors"])
+
+    # A plain anchor without reuse is refused the same way (no special cases to reason about).
+    anchored = client.post("/v1/specs/validate", json={"yaml": "name: &n x\nrun_profile: *n\n"}).json()
+    assert anchored["ok"] is False and any("alias" in err.lower() for err in anchored["errors"])
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/specs").text).group(1)
+    started = time.perf_counter()
+    page = client.post("/ui/specs/load", data={"yaml": bomb, "csrf_token": token})
+    assert time.perf_counter() - started < 2.0
+    assert page.status_code == 400
+    assert "alias" in page.text.lower()
+
+
 def test_probe_runs_healthchecks_and_never_echoes_secrets(client: TestClient):
     skipped = client.post("/v1/specs/probe", json={"spec": _spec()})
     assert skipped.status_code == 200
