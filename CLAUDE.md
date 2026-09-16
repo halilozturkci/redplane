@@ -14,6 +14,7 @@ uv sync --extra mcs                  # Copilot Studio GA client (SDK mode)
 uv run urt --help                    # CLI entry point
 uv run urt run --spec templates/run_spec.mcs_real.sample.yaml  # execute a real run spec
 uv run urt run --spec templates/run_spec.smoke.yaml  # launcher presence only
+uv run urt view <run_id>             # loopback-only viewer for one run directory
 uv run urt serve-gateway --config templates/gateway_config.sample.yaml
 ```
 
