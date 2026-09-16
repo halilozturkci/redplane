@@ -43,8 +43,9 @@
       <td class="name"><a href="/ui/runs/{{ row.run_id }}">{{ row.name }}</a><div class="note mono">{{ row.run_id }}</div></td>
       <td>{{ row.profile }}</td>
       <td>
-        <span class="badge {{ 'ok' if row.status == 'completed' else ('skipped' if row.status == 'running' else 'fail') }}">{{ row.status }}</span>
-        {% if row.status == "running" %}<div class="note">last update {{ row.updated_at }}</div>{% endif %}
+        <span class="badge {{ 'ok' if row.status == 'completed' else ('skipped' if row.status in ('queued', 'running') else 'fail') }}">{{ row.status }}</span>
+        {% if row.get("stale") %}<span class="badge fail" title="the worker process is gone; a control-plane restart marks this run failed">stale</span>{% endif %}
+        {% if not row.get("terminal", true) %}<div class="note">last update {{ row.updated_at }} · {{ row.get("stage_event_count", 0) }} stage events</div>{% endif %}
       </td>
       <td class="mono">{{ row.created_at }}</td>
       <td class="num">{{ row.get("duration_seconds") | seconds }}</td>

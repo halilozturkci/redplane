@@ -19,6 +19,7 @@ from ..constants import (
     REPORT_METADATA_JSON_CAP,
     RUN_PROFILE_DEFAULTS,
     SEVERITY_ORDER,
+    STAGE_EVENTS_FILE,
 )
 from ..normalization.kind import FINDING_KINDS, finding_kind
 from ..policy.waivers import matching_waiver, waiver_is_active
@@ -160,6 +161,7 @@ class RunBundle:
     bundle_format_version: str | None
     legacy: bool
     error_log_head: str | None = None
+    stage_events: list[dict[str, Any]] = field(default_factory=list)
     _unified: list[UnifiedFinding] = field(default_factory=list, repr=False)
 
     @property
@@ -339,6 +341,7 @@ def build_bundle(
     waivers: list[dict[str, Any]] | None = None,
     run_dir: Path | None = None,
     error_log_head: str | None = None,
+    stage_events: list[dict[str, Any]] | None = None,
     metadata_cap: int = REPORT_METADATA_JSON_CAP,
 ) -> RunBundle:
     """Assemble a `RunBundle` from already-loaded payloads (redaction is the caller's job)."""
@@ -391,6 +394,7 @@ def build_bundle(
         bundle_format_version=version_text,
         legacy=legacy,
         error_log_head=error_log_head,
+        stage_events=list(stage_events or []),
         _unified=unified,
     )
 
@@ -459,5 +463,6 @@ def load_bundle(
         waivers=waivers,
         run_dir=root,
         error_log_head=None if legacy else _error_log_head(root),
+        stage_events=redacted(STAGE_EVENTS_FILE, []),
         metadata_cap=metadata_cap,
     )

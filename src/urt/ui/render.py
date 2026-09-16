@@ -265,6 +265,9 @@ def page_context(bundle: RunBundle, *, mode: Mode, href_for: HrefFor) -> dict[st
         "self_referential_files": SELF_REFERENTIAL_FILES,
         "resolved_spec": bundle.resolved_spec,
         "error_log_head": bundle.error_log_head,
+        "stage_events": bundle.stage_events,
+        # SQLite lifecycle row (status, stale, worker); only the served pages have one.
+        "run_row": None,
         "href_for": href_for,
         "waivers": bundle.waivers,
     }

@@ -1,0 +1,35 @@
+{% set live = mode == "served" and run_row is not none and not run_row.terminal %}
+<div id="run-progress" class="progress"{% if live %} hx-get="/ui/runs/{{ run_id | urlencode }}/progress?since={{ run_row.status | urlencode }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <h3>Stage events</h3>
+  <p class="note">
+    Discrete orchestrator stages as they are recorded: run, target healthcheck, engine and evaluator
+    started / ended per target, normalization. There is no completion fraction — the orchestrator
+    has no total unit of work — and no token stream.
+    {% if live %}Run is <strong>{{ run_row.status }}</strong>{% if run_row.stale %} (<strong>stale</strong>: the worker process is gone; a control-plane restart marks it failed){% endif %}; this list refreshes every 3 s until it finishes.{% endif %}
+  </p>
+  {% if stage_events %}
+  <table class="stages">
+    <thead><tr><th>At</th><th>Stage</th><th>Status</th><th>Target</th><th>Engine / evaluator</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for event in stage_events %}
+      {% set status = event.get("status", "") %}
+      <tr>
+        <td class="mono">{{ event.get("at", "") }}</td>
+        <td>{{ event.get("stage", "") }}</td>
+        <td><span class="badge {{ 'ok' if status in ('completed', 'ok') else ('skipped' if status in ('started', 'skipped') else 'fail') }}">{{ status }}</span></td>
+        <td>{{ event.get("target_id", "") }}</td>
+        <td>{{ event.get("engine") or event.get("evaluator") or "" }}</td>
+        <td>
+          {% if event.get("message") %}{{ event.get("message") }}{% endif %}
+          {% if event.get("duration_seconds") is not none %}<span class="muted">{{ event.get("duration_seconds") | seconds }}</span>{% endif %}
+          {% if event.get("finding_count") is not none %}<span class="muted">{{ event.get("finding_count") }} findings</span>{% endif %}
+          {% if event.get("score_count") is not none %}<span class="muted">{{ event.get("score_count") }} scores</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No stage events yet{% if live %}: the run is {{ run_row.status }} and has not started executing{% endif %}.</p>
+  {% endif %}
+</div>

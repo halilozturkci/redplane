@@ -43,9 +43,12 @@ RunSpec → Orchestrator.execute()
   → normalize_findings → build_scorecard → render reports
 ```
 
+`execute()` appends a stage event (`stage_events.json`) and rewrites `engine_invocations.json` after every step, so progress is observable while it runs. `POST /v1/runs` is async: `jobs.RunWorker` (one thread per `serve-api` process, in-memory FIFO, SQLite `runs.status` = `queued|running|completed|failed`) calls the **same** `execute(spec, run_id=...)` on the queued row — never a second execution path. `Orchestrator.recover_interrupted_runs()` (called by `create_app`) marks rows whose `worker_id` process is dead as `failed`; it never re-executes. `?wait=true` keeps the synchronous path; `urt run` is unchanged.
+
 **Key modules** (all under `src/urt/`):
 - `types.py` — All dataclasses: `RunSpec`, `TargetSpec`, `EngineSpec`, `EvaluatorSpec`, `UnifiedFinding`, `EvalScore`, etc.
 - `runtime.py` — BudgetTracker, rate limiter, seed/scenario/evidence helpers (RunSpec contracts)
+- `jobs.py` — `RunWorker` background thread for async `POST /v1/runs`, `worker_id` (`host:pid`) liveness helpers
 - `constants.py` — `SUPPORTED_TARGETS`, `SUPPORTED_ENGINES`, `SUPPORTED_EVALUATORS`, `RUN_PROFILE_DEFAULTS`, `SEVERITY_ORDER`
 - `adapters/__init__.py` — Factory functions: `create_target_adapter()`, `create_engine_adapter()`, `create_evaluator_adapter()` with lookup dicts
 - `adapters/engine_base.py` — `EngineAdapter` ABC + `EngineContext` dataclass
@@ -83,7 +86,7 @@ An OpenAI-compatible proxy (`stdlib ThreadingHTTPServer`, not FastAPI) that rout
 
 Enforced: duration budget, reported-cost budget, HTTP connect/request timeouts, evidence_level log caps, seed env, Promptfoo `enabled_scenarios`, HTTP `rate_limits`, evaluator `fail_open`, profile timeout/budget defaults, waiver-aware gate, spec `${VAR}` expand.
 
-Not claimed / next-work surface: true token streaming, Copilot SDK session serialize, invented USD cost, native Garak/PyRIT scenario flags, async `POST /v1/runs`, multi-tenant RBAC.
+Not claimed / next-work surface: true token streaming, Copilot SDK session serialize, invented USD cost, native Garak/PyRIT scenario flags, a distributed job queue (async runs are one thread + SQLite; interrupted runs are failed, not resumed), multi-tenant RBAC.
 
 ## Gitignore / Excluded Paths
 

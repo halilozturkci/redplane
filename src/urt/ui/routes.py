@@ -20,7 +20,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ..auth import SESSION_COOKIE, clear_session_cookie, failed_auth_delay, key_matches, safe_next, set_session_cookie
-from ..constants import SEVERITY_ORDER, WAIVER_DEFAULT_EXPIRY_DAYS
+from ..constants import SEVERITY_ORDER, TERMINAL_RUN_STATUSES, WAIVER_DEFAULT_EXPIRY_DAYS
 from ..diff import comparable, comparable_runs
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
@@ -40,7 +40,7 @@ from ..specs import (
     validate_spec_payload,
 )
 from ..types import ValidationError
-from .bundle import FindingView, RunBundle, load_bundle
+from .bundle import FindingView, RunBundle, build_bundle, load_bundle
 from .csrf import CSRF_COOKIE, CSRF_FIELD, csrf_token_for, set_csrf_cookie, verify_csrf
 from .filters import FindingFilters, filter_findings
 from .forms import read_form
@@ -75,22 +75,44 @@ def _check_eval_min(raw: str | None) -> float | None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _manifest_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": row["run_id"],
+        "name": row.get("name"),
+        "run_profile": row.get("profile"),
+        "status": row.get("status"),
+        "created_at": row.get("created_at"),
+    }
+
+
 def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
     router = APIRouter(prefix="/ui")
 
     def html(text: str, status_code: int = 200) -> HTMLResponse:
         return HTMLResponse(text, status_code=status_code, headers=PAGE_HEADERS)
 
-    def bundle_for(run_id: str) -> RunBundle:
-        if not orch.get_run(run_id):
+    def run_row_for(run_id: str) -> dict[str, Any]:
+        row = orch.get_run(run_id)
+        if not row:
             raise HTTPException(status_code=404, detail="Run not found")
+        return row
+
+    def bundle_for(run_id: str) -> RunBundle:
+        """The run's bundle; for a `queued`/`running` run whose directory does not exist yet
+        (or has no manifest yet) the SQLite row supplies name, profile and status."""
+        row = run_row_for(run_id)
         try:
             run_dir = orch.artifact_store.existing_run_dir(run_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="Run not found") from exc
-        if run_dir is None:
+        if run_dir is None and row["terminal"]:
             raise HTTPException(status_code=404, detail="Run directory not found")
-        return load_bundle(run_dir, waivers=orch.list_waivers())
+        if run_dir is None:
+            return build_bundle(run_id, scorecard=None, findings=[], manifest=_manifest_from_row(row), waivers=orch.list_waivers())
+        bundle = load_bundle(run_dir, waivers=orch.list_waivers())
+        if not row["terminal"]:
+            bundle.manifest = {**_manifest_from_row(row), **bundle.manifest, "status": row["status"]}
+        return bundle
 
     def configured_key() -> str | None:
         return getattr(app.state, "api_key", None)
@@ -146,7 +168,22 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             ignore_waivers=ignore_waivers,
             eval_min_pass_rate=_check_eval_min(eval_min_pass_rate),
         )
+        context["run_row"] = run_row_for(run_id)
         return page("run_detail.html", request, **context)
+
+    @router.get("/runs/{run_id}/progress", response_class=HTMLResponse)
+    def progress_fragment(run_id: str, since: str = Query(default="")) -> HTMLResponse:
+        """Stage events so far (§4.10). Polled by the detail page every few seconds while
+        the run is `queued`/`running`; once the run is terminal a poll that started from a
+        non-terminal state gets `HX-Refresh` so the page reloads with the scorecard."""
+        row = run_row_for(run_id)
+        events = orch.stage_events(run_id) or []
+        response = html(
+            render_template("partials/_progress.html", mode="served", run_id=run_id, run_row=row, stage_events=events)
+        )
+        if since and since not in TERMINAL_RUN_STATUSES and row["terminal"]:
+            response.headers["HX-Refresh"] = "true"
+        return response
 
     @router.get("/runs/{run_id}/gate", response_class=HTMLResponse)
     def gate_fragment(

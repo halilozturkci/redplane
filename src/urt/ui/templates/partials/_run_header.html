@@ -1,7 +1,7 @@
 <h1>Redplane report: {{ name }}</h1>
 <div class="meta">
   <span><strong>Run:</strong> <span class="mono">{{ run_id }}</span></span>
-  <span><strong>Status:</strong> <span class="badge {{ 'ok' if status == 'completed' else 'fail' }}">{{ status }}</span></span>
+  <span><strong>Status:</strong> <span class="badge {{ 'ok' if status == 'completed' else ('skipped' if status in ('queued', 'running') else 'fail') }}">{{ status }}</span>{% if run_row is not none and run_row.stale %} <span class="badge fail">stale</span>{% endif %}</span>
   <span><strong>Profile:</strong> {{ profile }}</span>
   {% if manifest.get("created_at") %}<span><strong>Created:</strong> {{ manifest.get("created_at") }}</span>{% endif %}
   <span><strong>Duration:</strong> {{ manifest.get("duration_seconds") | seconds }}</span>
