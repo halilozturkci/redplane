@@ -15,7 +15,7 @@ from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .redaction import redact_run_spec_payload
-from .report import evaluate_gate, load_findings, render_csv, render_html, render_markdown
+from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
 from .gateway.redaction import redact_payload
@@ -222,9 +222,27 @@ def cmd_gate(args: argparse.Namespace) -> int:
     waivers: list[dict[str, Any]] = []
     if not args.ignore_waivers:
         waivers = orchestrator.list_waivers()
-    ok, message = evaluate_gate(findings, threshold=args.threshold, waivers=waivers)
-    print(message)
-    return 0 if ok else 2
+    result = gate_result(findings, threshold=args.threshold, waivers=waivers)
+    print(result.message)
+    if args.explain:
+        _print_gate_explanation(result)
+    return 0 if result.ok else 2
+
+
+def _print_gate_explanation(result: GateResult) -> None:
+    print(f"Blocking findings ({len(result.blocking)}):")
+    for row in result.blocking:
+        print(
+            f"  - [{str(row['severity']).upper()}] {row['finding_id']} "
+            f"target={row['target_id']} engine={row['engine']} category={row['category']}"
+        )
+    print(f"Waived findings ({len(result.waived)}):")
+    for row in result.waived:
+        print(
+            f"  - [{str(row['severity']).upper()}] {row['finding_id']} "
+            f"waiver={row['waiver_id']} control={row['control_id']} "
+            f"owner={row['owner']} expires={row['expires_at']}"
+        )
 
 
 def cmd_runs(args: argparse.Namespace) -> int:
@@ -370,6 +388,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--ignore-waivers",
         action="store_true",
         help="Ignore stored waivers when evaluating the gate",
+    )
+    p_gate.add_argument(
+        "--explain",
+        action="store_true",
+        help="List the blocking findings and the waived findings with their waiver",
     )
     p_gate.set_defaults(func=cmd_gate)
 

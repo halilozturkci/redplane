@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
-from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
+from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB, SEVERITY_ORDER
 from .orchestrator import Orchestrator
 from .types import RunSpec, ValidationError
 
@@ -69,6 +69,23 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
     def get_artifacts(run_id: str) -> list[dict[str, Any]]:
         _require_run(run_id)
         return orch.list_artifacts(run_id)
+
+    @app.get("/v1/runs/{run_id}/gate")
+    def get_gate(
+        run_id: str,
+        threshold: str = Query(default="high"),
+        ignore_waivers: bool = Query(default=False),
+    ) -> dict[str, Any]:
+        _require_run(run_id)
+        if threshold.lower() not in SEVERITY_ORDER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported threshold '{threshold}'. Supported: {list(SEVERITY_ORDER)}",
+            )
+        result = orch.gate(run_id, threshold=threshold, ignore_waivers=ignore_waivers)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Findings not available for run")
+        return result.to_dict()
 
     @app.post("/v1/waivers")
     def create_waiver(payload: dict[str, Any]) -> dict[str, Any]:

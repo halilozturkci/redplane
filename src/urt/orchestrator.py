@@ -23,7 +23,7 @@ from .constants import (
 )
 from .normalization import build_scorecard, normalize_findings
 from .redaction import redact_run_spec_payload
-from .report import render_csv, render_html, render_markdown
+from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
 from .types import EngineRunResult, EvalRunResult, RunRecord, RunSpec, UnifiedFinding
@@ -456,6 +456,24 @@ class Orchestrator:
         if index_path.exists():
             return json.loads(index_path.read_text(encoding="utf-8"))
         return build_artifacts_index(run_root)
+
+    def gate(
+        self,
+        run_id: str,
+        *,
+        threshold: str = "high",
+        ignore_waivers: bool = False,
+    ) -> GateResult | None:
+        """Structured gate verdict for a run; None when findings are not available yet."""
+        run = self.metadata_store.get_run(run_id)
+        if not run:
+            return None
+        findings_path = run.get("findings_path")
+        if not findings_path or not Path(findings_path).exists():
+            return None
+        findings = load_findings(findings_path)
+        waivers = [] if ignore_waivers else self.list_waivers()
+        return gate_result(findings, threshold=threshold, waivers=waivers)
 
     def create_waiver(self, waiver_payload: dict[str, Any]) -> dict[str, Any]:
         from .types import WaiverRecord
