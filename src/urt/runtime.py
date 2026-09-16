@@ -2,12 +2,105 @@
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
+import threading
 import time
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from .constants import COST_METRIC_KEYS, EVIDENCE_TEXT_LIMITS, RUN_PROFILE_DEFAULTS
 from .types import BudgetSpec
+
+
+class ProcessGroupRegistry:
+    """Process groups of the tool subprocesses currently executing in this process.
+
+    Every engine/evaluator command is started as its own session (`start_new_session`),
+    so the tool and anything it spawns (`uvx` → `garak`, Node → Promptfoo workers) can be
+    killed as one group — on timeout, on Ctrl-C, and when `serve-api` shuts down while a
+    run is executing. Without this the tool is re-parented to PID 1 and keeps attacking
+    the target with no audit trail.
+    """
+
+    def __init__(self) -> None:
+        self._pids: set[int] = set()
+        self._lock = threading.Lock()
+
+    def register(self, pid: int) -> None:
+        with self._lock:
+            self._pids.add(pid)
+
+    def unregister(self, pid: int) -> None:
+        with self._lock:
+            self._pids.discard(pid)
+
+    def active(self) -> list[int]:
+        with self._lock:
+            return sorted(self._pids)
+
+    def terminate_all(self, *, grace_seconds: float = 1.0) -> list[int]:
+        """SIGTERM every registered group, then SIGKILL whatever is left. Returns the pids."""
+        pids = self.active()
+        for pid in pids:
+            kill_process_group(pid, signal.SIGTERM)
+        if pids:
+            time.sleep(grace_seconds)
+        for pid in pids:
+            kill_process_group(pid, signal.SIGKILL)
+        return pids
+
+
+ACTIVE_TOOL_PROCESSES = ProcessGroupRegistry()
+
+
+def kill_process_group(pid: int, sig: int) -> None:
+    """Signal the whole group led by `pid` (falls back to the pid where groups do not exist)."""
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(os.getpgid(pid), sig)
+        else:  # pragma: no cover - Windows
+            os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+
+
+def run_tool_process(
+    command: list[str],
+    *,
+    timeout_seconds: float | None,
+    env: dict[str, str] | None = None,
+    cwd: str | Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """`subprocess.run(..., capture_output=True, text=True)` for engine/evaluator tools,
+    with the tool in its own process group, registered in `ACTIVE_TOOL_PROCESSES` while it
+    runs, and the **group** killed on timeout or interruption (not just the direct child).
+    Raises `subprocess.TimeoutExpired` like `subprocess.run` does."""
+    process = subprocess.Popen(  # noqa: S603
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=str(cwd) if cwd is not None else None,
+        start_new_session=True,
+    )
+    ACTIVE_TOOL_PROCESSES.register(process.pid)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        kill_process_group(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(command, timeout_seconds or 0, output=stdout, stderr=stderr) from None
+    except BaseException:
+        kill_process_group(process.pid, signal.SIGKILL)
+        process.wait()
+        raise
+    finally:
+        ACTIVE_TOOL_PROCESSES.unregister(process.pid)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 class BudgetExceeded(RuntimeError):

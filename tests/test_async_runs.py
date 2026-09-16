@@ -5,6 +5,7 @@ incremental stage events, stale-`running` recovery. `urt run` stays synchronous.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import sys
 import time
@@ -226,6 +227,78 @@ def test_cli_run_is_still_synchronous_and_writes_stage_events(tmp_path: Path, ca
     assert out["status"] == "completed"
     stages = json.loads((tmp_path / "a" / out["run_id"] / "stage_events.json").read_text(encoding="utf-8"))
     assert stages[-1] == {**stages[-1], "stage": "run", "status": "completed"}
+
+
+ENGINE_WITH_GRANDCHILD = """
+import os, subprocess, sys, time
+marker = sys.argv[1]
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+open(marker, "w").write(f"{os.getpid()} {child.pid}")
+time.sleep(60)
+"""
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # A zombie still answers kill(0); read its state to tell.
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return False
+    return state != "Z"
+
+
+def test_stopping_the_worker_kills_the_engine_process_group_and_marks_the_run_interrupted(tmp_path: Path):
+    """S1: stopping `serve-api` must not orphan the attack tool. The engine and anything it
+    spawned run in their own process group; `RunWorker.stop()` kills that group, the run is
+    recorded `failed: interrupted`, and a run still queued is not started during shutdown."""
+    orchestrator = Orchestrator(artifact_root=str(tmp_path / "artifacts"), metadata_db=str(tmp_path / "meta.sqlite3"))
+    script = tmp_path / "engine.py"
+    script.write_text(ENGINE_WITH_GRANDCHILD, encoding="utf-8")
+    marker = tmp_path / "pids.txt"
+    spec = _spec(engine_command=f"{PYTHON} {script} {marker}", name="orphan-check")
+    app = create_app(orchestrator)
+    with TestClient(app) as client:
+        running = client.post("/v1/runs", json=spec).json()["run_id"]
+        queued = client.post("/v1/runs", json=passing_spec("never-started")).json()["run_id"]
+        deadline = time.monotonic() + 15
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert marker.exists(), "engine never started"
+        leader_pid, grandchild_pid = (int(p) for p in marker.read_text().split())
+        assert _pid_alive(leader_pid) and _pid_alive(grandchild_pid)
+        assert os.getpgid(leader_pid) == leader_pid  # its own session/process group
+        assert os.getpgid(leader_pid) != os.getpgid(os.getpid())
+
+        app.state.run_worker.stop(timeout=15)
+
+    deadline = time.monotonic() + 10
+    while (_pid_alive(leader_pid) or _pid_alive(grandchild_pid)) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _pid_alive(leader_pid), "engine leader survived the worker stop"
+    assert not _pid_alive(grandchild_pid), "engine grandchild survived the worker stop"
+
+    row = orchestrator.get_run(running)
+    assert row["status"] == "failed"
+    assert "interrupted" in row["error_message"]
+    stages = json.loads((tmp_path / "artifacts" / running / "stage_events.json").read_text(encoding="utf-8"))
+    assert stages[-1]["stage"] == "run" and stages[-1]["status"] == "failed"
+    manifest = json.loads((tmp_path / "artifacts" / running / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed" and "interrupted" in manifest["error"]
+
+    never = orchestrator.get_run(queued)
+    assert never["status"] == "failed"
+    assert never["started_at"] is None  # never promoted to running
+    assert "interrupted" in never["error_message"] and "queued" in never["error_message"]
+
+
+def test_mark_run_failed_never_flips_a_terminal_row(orchestrator: Orchestrator):
+    result = orchestrator.execute(RunSpec.from_dict(passing_spec("done")))
+    orchestrator.mark_run_failed(result["run_id"], "late error")
+    assert orchestrator.get_run(result["run_id"])["status"] == "completed"
 
 
 def test_orchestrator_execute_reuses_a_queued_record_instead_of_creating_a_second_run(orchestrator: Orchestrator):
