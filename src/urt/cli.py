@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .auth import API_KEY_ENV, api_key_from_env
 from .config import dump_run_spec, load_run_spec
 from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
 from .diff import render_diff_text
@@ -389,15 +390,21 @@ def cmd_view(args: argparse.Namespace) -> int:
 
 
 def cmd_serve_api(args: argparse.Namespace) -> int:
-    if not is_loopback_host(args.host) and not args.unsafe_allow_non_loopback:
+    api_key = api_key_from_env()
+    if not is_loopback_host(args.host) and not api_key and not args.unsafe_allow_unauthenticated:
         print(
-            f"Error: refusing to bind {args.host!r}. The API and /ui have no authentication; they are "
-            "meant for one operator on one machine. Bind a loopback address (default 127.0.0.1) and use "
-            "an SSH tunnel, or pass --unsafe-allow-non-loopback if you accept exposing runs, findings "
-            "and artifacts to that network.",
+            f"Error: refusing to bind {args.host!r} without authentication. Set {API_KEY_ENV} (a single "
+            "shared secret sent as `Authorization: Bearer` to the API and typed once at /ui/login for the "
+            "pages), bind a loopback address (default 127.0.0.1) and use an SSH tunnel, or pass "
+            "--unsafe-allow-unauthenticated if you accept exposing runs, findings and artifacts to that "
+            "network. This is a shared secret, not identity: there are no users or roles.",
             file=sys.stderr,
         )
         return 2
+    if api_key:
+        print(f"{API_KEY_ENV} is set: the API requires a bearer token and /ui requires sign-in at /ui/login.")
+    elif not is_loopback_host(args.host):
+        print(f"WARNING: serving {args.host!r} with no authentication (--unsafe-allow-unauthenticated).", file=sys.stderr)
     try:
         import uvicorn
     except ImportError:
@@ -556,10 +563,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_api.add_argument("--port", type=int, default=8000)
     p_api.add_argument("--reload", action="store_true")
     p_api.add_argument(
+        "--unsafe-allow-unauthenticated",
         "--unsafe-allow-non-loopback",
+        dest="unsafe_allow_unauthenticated",
         action="store_true",
-        help="Allow binding a non-loopback host. There is no authentication: anyone on that network "
-        "can read every run, finding and artifact and submit runs.",
+        help=f"Allow binding a non-loopback host without {API_KEY_ENV}. Anyone on that network can then "
+        "read every run, finding and artifact, create waivers and submit runs. "
+        "(--unsafe-allow-non-loopback is the older spelling.)",
     )
     p_api.set_defaults(func=cmd_serve_api)
 

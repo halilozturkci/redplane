@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from .artifact_policy import artifact_response_policy
+from .auth import api_key_from_env, install_auth
 from .constants import (
     ARTIFACT_RESPONSE_HEADERS,
     DEFAULT_ARTIFACT_ROOT,
@@ -74,11 +75,16 @@ def _build_orchestrator() -> Orchestrator:
     return Orchestrator(artifact_root=artifact_root, metadata_db=metadata_db)
 
 
-def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
-    """Build the API. Pass an `Orchestrator` to point it at non-default stores (tests)."""
+def create_app(orchestrator: Orchestrator | None = None, *, api_key: str | None = None) -> FastAPI:
+    """Build the API. Pass an `Orchestrator` to point it at non-default stores (tests).
+
+    `api_key` (default: `URT_API_KEY` from the environment) turns on the shared-secret
+    gate described in `urt.auth`; None leaves everything open (loopback use).
+    """
     orch = orchestrator or _build_orchestrator()
     app = FastAPI(title="Redplane API", version="0.1.0")
     app.state.orchestrator = orch
+    install_auth(app, api_key if api_key is not None else api_key_from_env())
 
     def _require_run(run_id: str) -> dict[str, Any]:
         run = orch.get_run(run_id)
@@ -192,6 +198,14 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
             _make_bundle_reader(bundle_file),
             methods=["GET"],
         )
+
+    @app.get("/v1/runs/{run_id}/coverage")
+    def get_coverage(run_id: str) -> dict[str, Any]:
+        _require_run(run_id)
+        coverage = orch.coverage(run_id)
+        if coverage is None:
+            raise HTTPException(status_code=404, detail="Run directory not found")
+        return coverage
 
     @app.get("/v1/runs/{run_id}/gate")
     def get_gate(

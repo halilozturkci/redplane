@@ -8,6 +8,7 @@ page also works without JavaScript (plain GET forms, ``?finding_id=`` drawer).
 
 from __future__ import annotations
 
+import hmac
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from ..auth import SESSION_COOKIE, clear_session_cookie, safe_next, set_session_cookie
 from ..constants import SEVERITY_ORDER, WAIVER_DEFAULT_EXPIRY_DAYS
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
@@ -89,9 +91,26 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             raise HTTPException(status_code=404, detail="Run directory not found")
         return load_bundle(run_dir, waivers=orch.list_waivers())
 
+    def configured_key() -> str | None:
+        return getattr(app.state, "api_key", None)
+
+    def page(template: str, request: Request, status_code: int = 200, **context: Any) -> HTMLResponse:
+        """Full page: CSRF token issued/embedded, session state for the nav."""
+        token = csrf_token_for(request)
+        context.setdefault("mode", "served")
+        context.setdefault("session_active", bool(configured_key()) and SESSION_COOKIE in request.cookies)
+        response = html(
+            render_template(template, csrf_token=token, csrf_field=CSRF_FIELD, **context),
+            status_code=status_code,
+        )
+        if request.cookies.get(CSRF_COOKIE) != token:
+            set_csrf_cookie(response, token)
+        return response
+
     @router.get("", response_class=HTMLResponse)
     @router.get("/", response_class=HTMLResponse)
     def runs_list(
+        request: Request,
         target: str = Query(default=""),
         name_prefix: str = Query(default=""),
         gate_threshold: str = Query(default=""),
@@ -103,18 +122,17 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             rows = [row for row in rows if target in (row.get("targets") or [])]
         if name_prefix:
             rows = [row for row in rows if str(row.get("name", "")).startswith(name_prefix)]
-        return html(
-            render_template(
-                "runs_list.html",
-                mode="served",
-                rows=rows,
-                targets=targets,
-                filters={"target": target, "name_prefix": name_prefix, "gate_threshold": threshold or ""},
-            )
+        return page(
+            "runs_list.html",
+            request,
+            rows=rows,
+            targets=targets,
+            filters={"target": target, "name_prefix": name_prefix, "gate_threshold": threshold or ""},
         )
 
     @router.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(
+        request: Request,
         run_id: str,
         threshold: str = Query(default=""),
         ignore_waivers: bool = Query(default=False),
@@ -127,7 +145,7 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             ignore_waivers=ignore_waivers,
             eval_min_pass_rate=_check_eval_min(eval_min_pass_rate),
         )
-        return html(render_template("run_detail.html", **context))
+        return page("run_detail.html", request, **context)
 
     @router.get("/runs/{run_id}/gate", response_class=HTMLResponse)
     def gate_fragment(
@@ -154,7 +172,7 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         if finding_id and selected is None:
             raise HTTPException(status_code=404, detail="Finding not found")
         context.update({"filtered": filter_findings(bundle, filters), "selected": selected, "filters_qs": filters.query_string()})
-        return html(render_template("findings_page.html", **context))
+        return page("findings_page.html", request, **context)
 
     @router.get("/runs/{run_id}/findings/table", response_class=HTMLResponse)
     def findings_table(run_id: str, request: Request) -> HTMLResponse:
@@ -173,10 +191,43 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         context = served_context(bundle)
         return html(render_template("partials/_finding_drawer.html", view=view, **context))
 
+    # --- login (G13): cookie session for the pages when URT_API_KEY is set ---
+
+    @router.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request, next: str = Query(default="/ui")) -> HTMLResponse:
+        return page(
+            "login.html", request, key_configured=bool(configured_key()), next=safe_next(next), error=None
+        )
+
+    @router.post("/login", response_class=HTMLResponse)
+    async def login_submit(request: Request) -> Response:
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        key = configured_key()
+        target = safe_next(fields.get("next"))
+        if not key:
+            return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
+        submitted = fields.get("api_key", "")
+        if not submitted or not hmac.compare_digest(submitted, key):
+            return page(
+                "login.html", request, status_code=401, key_configured=True, next=target, error="Wrong API key."
+            )
+        response = RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
+        set_session_cookie(response, key)
+        return response
+
+    @router.post("/logout")
+    async def logout(request: Request) -> Response:
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        response = RedirectResponse("/ui/login", status_code=303, headers=PAGE_HEADERS)
+        clear_session_cookie(response)
+        return response
+
     # --- diff and trend (§4.5) ---
 
     @router.get("/diff", response_class=HTMLResponse)
-    def diff_page(a: str = Query(default=""), b: str = Query(default="")) -> HTMLResponse:
+    def diff_page(request: Request, a: str = Query(default=""), b: str = Query(default="")) -> HTMLResponse:
         diff = None
         if a and b:
             for run_id in (a, b):
@@ -184,23 +235,21 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
                     raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             diff = orch.diff(a, b)
         runs = orch.metadata_store.list_runs()
-        return html(render_template("diff.html", mode="served", runs=runs, a=a, b=b, diff=diff))
+        return page("diff.html", request, runs=runs, a=a, b=b, diff=diff)
 
     @router.get("/targets/{target_id}/trend", response_class=HTMLResponse)
-    def trend_page(target_id: str) -> HTMLResponse:
+    def trend_page(request: Request, target_id: str) -> HTMLResponse:
         points = orch.trend(target_id)
         if not points:
             raise HTTPException(status_code=404, detail="No runs with findings for this target")
-        return html(
-            render_template(
+        return page(
                 "trend.html",
-                mode="served",
+                request,
                 target_id=target_id,
                 points=points,
                 asr_spark=sparkline([p.asr_overall for p in points], ymax=1.0),
                 ch_spark=sparkline([p.critical_high for p in points]),
                 eval_spark=sparkline([p.eval_pass_rate_run for p in points], ymax=1.0),
-            )
         )
 
     # --- spec builder (§4.7): validate-only + probe; no Run button ---
@@ -301,15 +350,6 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
 
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 
-    def page(template: str, request: Request, status_code: int = 200, **context: Any) -> HTMLResponse:
-        token = csrf_token_for(request)
-        response = html(
-            render_template(template, mode="served", csrf_token=token, csrf_field=CSRF_FIELD, **context),
-            status_code=status_code,
-        )
-        if request.cookies.get(CSRF_COOKIE) != token:
-            set_csrf_cookie(response, token)
-        return response
 
     def default_expiry() -> str:
         return (datetime.now(timezone.utc) + timedelta(days=WAIVER_DEFAULT_EXPIRY_DAYS)).replace(microsecond=0).isoformat()

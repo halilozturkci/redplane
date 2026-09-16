@@ -249,11 +249,12 @@ def test_serve_api_refuses_non_loopback_without_explicit_flag(monkeypatch, capsy
     fake_uvicorn = type("U", (), {"run": staticmethod(lambda *a, **kw: calls.append(kw))})
     monkeypatch.setitem(__import__("sys").modules, "uvicorn", fake_uvicorn)
 
+    monkeypatch.delenv("URT_API_KEY", raising=False)
     assert cli.main(["serve-api", "--host", "0.0.0.0"]) == 2
     assert calls == []
-    assert "--unsafe-allow-non-loopback" in capsys.readouterr().err
+    assert "--unsafe-allow-unauthenticated" in capsys.readouterr().err
 
-    assert cli.main(["serve-api", "--host", "0.0.0.0", "--unsafe-allow-non-loopback"]) == 0
+    assert cli.main(["serve-api", "--host", "0.0.0.0", "--unsafe-allow-unauthenticated"]) == 0
     assert calls[-1]["host"] == "0.0.0.0"
     assert cli.main(["serve-api", "--host", "127.0.0.1"]) == 0
     assert calls[-1]["host"] == "127.0.0.1"
