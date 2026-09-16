@@ -6,7 +6,11 @@ persisted, execution failures are 500 after the run was recorded as failed.
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -130,6 +134,140 @@ def test_unknown_run_is_404(client: TestClient, suffix: str):
     response = client.get(f"/v1/runs/does-not-exist{suffix}")
     assert response.status_code == 404
     assert response.json()["detail"] == "Run not found"
+
+
+@pytest.fixture
+def completed_run(client: TestClient) -> str:
+    response = client.post("/v1/runs", json=passing_spec())
+    assert response.status_code == 200
+    return response.json()["run_id"]
+
+
+def test_bundle_read_endpoints_return_file_content(client: TestClient, completed_run: str, orchestrator: Orchestrator):
+    run_dir = Path(orchestrator.artifact_store.root_dir) / completed_run
+
+    scorecard = client.get(f"/v1/runs/{completed_run}/scorecard")
+    assert scorecard.status_code == 200
+    assert scorecard.json() == json.loads((run_dir / "scorecard.json").read_text(encoding="utf-8"))
+    assert scorecard.json()["run_id"] == completed_run
+
+    summary = client.get(f"/v1/runs/{completed_run}/summary")
+    assert summary.status_code == 200
+    assert summary.json()["engines"] == ["garak"]
+    assert summary.json()["targets"] == ["local-http"]
+    assert summary.json()["engine_summaries"][0]["status"] == "completed"
+
+    manifest = client.get(f"/v1/runs/{completed_run}/manifest")
+    assert manifest.status_code == 200
+    assert manifest.json()["bundle_format_version"] == "1.1"
+    assert manifest.json()["status"] == "completed"
+    assert "duration_seconds" in manifest.json()
+
+    invocations = client.get(f"/v1/runs/{completed_run}/invocations")
+    assert invocations.status_code == 200
+    assert [item["engine"] for item in invocations.json()] == ["garak"]
+    assert {"started_at", "ended_at", "duration_seconds", "status", "fail_open"} <= set(invocations.json()[0])
+
+
+@pytest.mark.parametrize("name", ["scorecard", "summary", "manifest", "invocations"])
+def test_bundle_read_endpoints_404_for_unknown_run(client: TestClient, name: str):
+    response = client.get(f"/v1/runs/missing/{name}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Run not found"
+
+
+def test_bundle_read_endpoints_404_when_file_is_absent_for_failed_run(client: TestClient):
+    failed = client.post("/v1/runs", json=failing_spec()).json()["detail"]
+    run_id = failed["run_id"]
+
+    assert client.get(f"/v1/runs/{run_id}/manifest").status_code == 200
+    assert client.get(f"/v1/runs/{run_id}/manifest").json()["status"] == "failed"
+    for name in ("scorecard", "summary", "invocations"):
+        response = client.get(f"/v1/runs/{run_id}/{name}")
+        assert response.status_code == 404, name
+        assert "not available" in response.json()["detail"]
+
+
+def test_artifact_download_serves_bundle_files_with_safe_headers(client: TestClient, completed_run: str, orchestrator: Orchestrator):
+    run_dir = Path(orchestrator.artifact_store.root_dir) / completed_run
+
+    scorecard = client.get(f"/v1/runs/{completed_run}/artifacts/scorecard.json")
+    assert scorecard.status_code == 200
+    assert scorecard.headers["content-type"].startswith("application/json")
+    assert scorecard.headers["x-content-type-options"] == "nosniff"
+    assert scorecard.content == (run_dir / "scorecard.json").read_bytes()
+
+    report_md = client.get(f"/v1/runs/{completed_run}/artifacts/report.md")
+    assert report_md.status_code == 200
+    assert report_md.headers["content-type"].startswith("text/")
+
+    nested = client.get(f"/v1/runs/{completed_run}/artifacts/raw/garak/local-http_stdout.log")
+    assert nested.status_code == 200
+    assert b"garak-ok" in nested.content
+
+    html = client.get(f"/v1/runs/{completed_run}/artifacts/report.html")
+    assert html.status_code == 200
+    assert "attachment" in html.headers["content-disposition"]
+
+    unknown = orchestrator.artifact_store.write_bytes(completed_run, "raw/blob.bin", b"\x00\x01")
+    assert Path(unknown).exists()
+    blob = client.get(f"/v1/runs/{completed_run}/artifacts/raw/blob.bin")
+    assert blob.status_code == 200
+    assert blob.headers["content-type"] == "application/octet-stream"
+    assert "attachment" in blob.headers["content-disposition"]
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    # `./x` is normalized away by the HTTP client before it reaches the server; the
+    # server-side rejection of "." segments is covered in test_artifact_path_guard.py.
+    ["../other/report.md", "raw/../../x", "raw//x", "%2e%2e/x", "raw/%2e%2e/%2e%2e/x"],
+)
+def test_artifact_download_rejects_traversal(client: TestClient, completed_run: str, relative_path: str):
+    response = client.get(f"/v1/runs/{completed_run}/artifacts/{relative_path}")
+    assert response.status_code in {400, 404}
+    if response.status_code == 400:
+        assert "artifact path" in response.json()["detail"].lower()
+
+
+def test_artifact_download_404s_for_missing_file_and_unknown_run(client: TestClient, completed_run: str):
+    missing = client.get(f"/v1/runs/{completed_run}/artifacts/nope.json")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Artifact not found"
+    assert client.get("/v1/runs/missing/artifacts/scorecard.json").status_code == 404
+
+
+def test_artifact_zip_matches_the_index(client: TestClient, completed_run: str):
+    response = client.get(f"/v1/runs/{completed_run}/artifacts.zip")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert f'filename="{completed_run}.zip"' in response.headers["content-disposition"]
+
+    index = {item["path"]: item for item in client.get(f"/v1/runs/{completed_run}/artifacts").json()}
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        assert all(name.startswith(f"{completed_run}/") for name in names)
+        relative = {name.split("/", 1)[1] for name in names}
+        assert relative == set(index)
+        for rel, meta in index.items():
+            if rel == "artifacts_index.json":
+                continue  # the index cannot contain its own final hash
+            assert hashlib.sha256(archive.read(f"{completed_run}/{rel}")).hexdigest() == meta["sha256"]
+
+    assert client.get("/v1/runs/missing/artifacts.zip").status_code == 404
+
+
+def test_findings_expose_bundle_relative_evidence_paths(client: TestClient, completed_run: str):
+    findings = client.get(f"/v1/runs/{completed_run}/findings").json()
+    execution = next(item for item in findings if item["sub_category"] == "engine_runtime")
+
+    assert len(execution["evidence_artifacts"]) == len(execution["evidence_refs"])
+    assert execution["evidence_artifacts"] == [
+        "raw/garak/local-http_stdout.log",
+        "raw/garak/local-http_stderr.log",
+    ]
+    for rel in execution["evidence_artifacts"]:
+        assert client.get(f"/v1/runs/{completed_run}/artifacts/{rel}").status_code == 200
 
 
 def test_waivers_validate_create_and_filter(client: TestClient):

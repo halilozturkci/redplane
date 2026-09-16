@@ -445,17 +445,39 @@ class Orchestrator:
         return self.metadata_store.list_runs()
 
     def get_findings(self, run_id: str) -> list[dict[str, Any]]:
-        return self.metadata_store.get_findings(run_id)
+        findings = self.metadata_store.get_findings(run_id)
+        for item in findings:
+            # evidence_refs are absolute filesystem paths; expose the bundle-relative
+            # form so clients can fetch them through the artifact endpoints.
+            item["evidence_artifacts"] = [
+                self.artifact_store.relative_artifact_path(run_id, str(ref))
+                for ref in item.get("evidence_refs", [])
+            ]
+        return findings
 
     def list_artifacts(self, run_id: str) -> list[dict[str, Any]]:
         run = self.metadata_store.get_run(run_id)
         if not run:
             return []
-        run_root = self.artifact_store.run_dir(run_id)
-        index_path = run_root / "artifacts_index.json"
-        if index_path.exists():
-            return json.loads(index_path.read_text(encoding="utf-8"))
-        return build_artifacts_index(run_root)
+        index = self.artifact_store.read_json(run_id, "artifacts_index.json")
+        if index is not None:
+            return index
+        return build_artifacts_index(self.artifact_store.run_dir(run_id))
+
+    def read_bundle_json(self, run_id: str, file_name: str) -> Any | None:
+        """Content of one bundle JSON file (`AUDIT_BUNDLE_FILES`), None when absent."""
+        if file_name not in AUDIT_BUNDLE_FILES or not file_name.endswith(".json"):
+            raise ValueError(f"Not a bundle JSON file: {file_name}")
+        if not self.metadata_store.get_run(run_id):
+            return None
+        return self.artifact_store.read_json(run_id, file_name)
+
+    def artifact_path(self, run_id: str, relative_path: str) -> Path:
+        """Filesystem path of one artifact, confined to the run directory (see ArtifactStore)."""
+        return self.artifact_store.resolve_artifact(run_id, relative_path)
+
+    def artifact_zip(self, run_id: str) -> bytes:
+        return self.artifact_store.zip_run(run_id)
 
     def gate(
         self,

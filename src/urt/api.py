@@ -9,13 +9,55 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi.responses import FileResponse
 
 from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB, SEVERITY_ORDER
 from .orchestrator import Orchestrator
+from .storage.artifact_store import ArtifactPathError
 from .types import RunSpec, ValidationError
+
+# Bundle files exposed as JSON content (G1). Never accept a path from the client here.
+BUNDLE_JSON_ENDPOINTS = {
+    "scorecard": "scorecard.json",
+    "summary": "run_summary.json",
+    "manifest": "run_manifest.json",
+    "invocations": "engine_invocations.json",
+}
+
+# Served inline. Everything else is an attachment with a generic type so the
+# browser never renders attacker-influenced tool output in the API origin.
+INLINE_MEDIA_TYPES = {
+    ".json": "application/json",
+    ".jsonl": "application/x-ndjson",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".log": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".yaml": "text/plain; charset=utf-8",
+    ".yml": "text/plain; charset=utf-8",
+}
+ATTACHMENT_MEDIA_TYPES = {
+    ".html": "text/html; charset=utf-8",
+}
+
+
+def _artifact_response(path: Path, relative_path: str) -> FileResponse:
+    suffix = path.suffix.lower()
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if suffix in INLINE_MEDIA_TYPES:
+        return FileResponse(path, media_type=INLINE_MEDIA_TYPES[suffix], headers=headers)
+    media_type = ATTACHMENT_MEDIA_TYPES.get(suffix, "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers=headers,
+        filename=Path(relative_path).name,
+        content_disposition_type="attachment",
+    )
 
 
 def _build_orchestrator() -> Orchestrator:
@@ -69,6 +111,52 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
     def get_artifacts(run_id: str) -> list[dict[str, Any]]:
         _require_run(run_id)
         return orch.list_artifacts(run_id)
+
+    @app.get("/v1/runs/{run_id}/artifacts.zip")
+    def get_artifacts_zip(run_id: str) -> Response:
+        _require_run(run_id)
+        try:
+            payload = orch.artifact_zip(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Run directory not found") from exc
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{run_id}.zip"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get("/v1/runs/{run_id}/artifacts/{relative_path:path}")
+    def get_artifact_file(run_id: str, relative_path: str) -> FileResponse:
+        _require_run(run_id)
+        try:
+            path = orch.artifact_path(run_id, relative_path)
+        except ArtifactPathError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid artifact path: {exc}") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+        return _artifact_response(path, relative_path)
+
+    for endpoint_name, bundle_file in BUNDLE_JSON_ENDPOINTS.items():
+
+        def _make_bundle_reader(file_name: str):
+            def read_bundle(run_id: str) -> Any:
+                _require_run(run_id)
+                content = orch.read_bundle_json(run_id, file_name)
+                if content is None:
+                    raise HTTPException(status_code=404, detail=f"{file_name} not available for run")
+                return content
+
+            read_bundle.__name__ = f"get_{file_name.removesuffix('.json')}"
+            return read_bundle
+
+        app.add_api_route(
+            f"/v1/runs/{{run_id}}/{endpoint_name}",
+            _make_bundle_reader(bundle_file),
+            methods=["GET"],
+        )
 
     @app.get("/v1/runs/{run_id}/gate")
     def get_gate(
