@@ -542,7 +542,9 @@ class Orchestrator:
     def get_findings(self, run_id: str) -> list[dict[str, Any]]:
         # Read-time key redaction covers rows written by pre-1.1 code (e.g. the
         # `metadata.env_overrides` dict); write-time scrubbing covers everything else.
-        findings = redact_bundle_payload(self.metadata_store.get_findings(run_id))
+        findings = redact_bundle_payload(
+            self.metadata_store.get_findings(run_id), legacy=not self.bundle_is_redacted(run_id)
+        )
         for item in findings:
             # evidence_refs are absolute filesystem paths; expose the bundle-relative
             # form so clients can fetch them through the artifact endpoints.
@@ -568,7 +570,9 @@ class Orchestrator:
         if not self.metadata_store.get_run(run_id):
             return None
         content = self.artifact_store.read_json(run_id, file_name)
-        return None if content is None else redact_bundle_payload(content)
+        if content is None:
+            return None
+        return redact_bundle_payload(content, legacy=not self.bundle_is_redacted(run_id))
 
     def bundle_format_version(self, run_id: str) -> str | None:
         manifest = self.artifact_store.read_json(run_id, "run_manifest.json")

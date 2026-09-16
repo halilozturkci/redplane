@@ -20,9 +20,9 @@ from fastapi.responses import FileResponse
 from .constants import (
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_METADATA_DB,
+    LEGACY_RAW_DOWNLOAD_ALLOWLIST,
     REDACTED_BUNDLE_MIN_VERSION,
     SEVERITY_ORDER,
-    SPEC_BEARING_BUNDLE_FILES,
 )
 from .orchestrator import Orchestrator
 from .storage.artifact_store import ArtifactPathError
@@ -145,8 +145,8 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
             status_code=409,
             detail=(
                 f"Bundle format version {version} predates write-time redaction "
-                f"({REDACTED_BUNDLE_MIN_VERSION}); resolved_spec.json, run_manifest.json, "
-                "findings.json and the zip may contain expanded credentials and are not served raw. "
+                f"({REDACTED_BUNDLE_MIN_VERSION}); only {list(LEGACY_RAW_DOWNLOAD_ALLOWLIST)} are served "
+                "raw for such bundles, and the zip is not. Other files may contain expanded credentials. "
                 "Use the JSON endpoints (/manifest, /summary, /invocations, /findings), which redact "
                 "at read time. See README 'Output, Reports, and Audit Format'."
             ),
@@ -173,7 +173,7 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
     @app.get("/v1/runs/{run_id}/artifacts/{relative_path:path}")
     def get_artifact_file(run_id: str, relative_path: str) -> FileResponse:
         _require_run(run_id)
-        if relative_path in SPEC_BEARING_BUNDLE_FILES:
+        if relative_path not in LEGACY_RAW_DOWNLOAD_ALLOWLIST:
             _require_redacted_bundle(run_id)
         try:
             path = orch.artifact_path(run_id, relative_path)

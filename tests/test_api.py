@@ -290,14 +290,23 @@ def legacy_run(client: TestClient, orchestrator: Orchestrator, completed_run: st
 
     summary = json.loads((run_dir / "run_summary.json").read_text(encoding="utf-8"))
     summary["engine_summaries"][0]["metrics"]["api_key"] = LEGACY_SECRET
+    summary["engine_summaries"][0]["metrics"]["command"] = ["tool", "--api-key", LEGACY_SECRET]
     (run_dir / "run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
 
     invocations = json.loads((run_dir / "engine_invocations.json").read_text(encoding="utf-8"))
     invocations[0]["metrics"]["bearer_token"] = LEGACY_SECRET
+    invocations[0]["metrics"]["command"] = ["tool", "--api-key", LEGACY_SECRET]
     (run_dir / "engine_invocations.json").write_text(json.dumps(invocations), encoding="utf-8")
 
+    sidecar = run_dir / "raw" / "custom_script" / "local-http_engine_findings.json"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(json.dumps({"engine_findings": [{"metadata": {"env_overrides": {"ECHO": LEGACY_SECRET}}}]}), encoding="utf-8")
+    (run_dir / "raw" / "garak" / "local-http_stdout.log").write_text(f"tool printed {LEGACY_SECRET}\n", encoding="utf-8")
+
     findings = orchestrator.metadata_store.get_findings(completed_run)
-    findings[0]["metadata"]["env_overrides"] = {"OPENAI_API_KEY": LEGACY_SECRET}
+    # 1.0 wrote the env dict; `ECHO` matches no key heuristic, only its position does.
+    findings[0]["metadata"]["env_overrides"] = {"OPENAI_API_KEY": LEGACY_SECRET, "ECHO": LEGACY_SECRET}
+    findings[0]["metadata"]["command"] = ["tool", "--api-key", LEGACY_SECRET]
     from urt.types import UnifiedFinding
 
     orchestrator.metadata_store.insert_findings(
@@ -316,22 +325,46 @@ def test_bundle_json_endpoints_redact_legacy_content_at_read_time(client: TestCl
     summary = client.get(f"/v1/runs/{legacy_run}/summary")
     assert LEGACY_SECRET not in summary.text
     assert summary.json()["engine_summaries"][0]["metrics"]["api_key"] == "***REDACTED***"
+    # Pre-1.1 argv was never scrubbed, so it is masked by position on read.
+    assert summary.json()["engine_summaries"][0]["metrics"]["command"] == ["***REDACTED***"] * 3
 
     invocations = client.get(f"/v1/runs/{legacy_run}/invocations")
     assert LEGACY_SECRET not in invocations.text
     assert invocations.json()[0]["metrics"]["bearer_token"] == "***REDACTED***"
+    assert invocations.json()[0]["metrics"]["command"] == ["***REDACTED***"] * 3
 
     findings = client.get(f"/v1/runs/{legacy_run}/findings")
     assert LEGACY_SECRET not in findings.text
     leaked = next(f for f in findings.json() if "env_overrides" in f["metadata"])
-    assert leaked["metadata"]["env_overrides"]["OPENAI_API_KEY"] == "***REDACTED***"
+    # The whole legacy env dict is masked by position, whatever the key names.
+    assert leaked["metadata"]["env_overrides"] == {"OPENAI_API_KEY": "***REDACTED***", "ECHO": "***REDACTED***"}
+    assert leaked["metadata"]["command"] == ["***REDACTED***"] * 3
 
     runs = client.get("/v1/runs")
     assert LEGACY_SECRET not in runs.text
 
 
-@pytest.mark.parametrize("relative_path", ["resolved_spec.json", "run_manifest.json", "findings.json"])
-def test_raw_download_of_spec_bearing_files_is_refused_for_legacy_bundles(
+def test_current_bundles_keep_argv_visible_on_read(client: TestClient, completed_run: str):
+    summary = client.get(f"/v1/runs/{completed_run}/summary").json()
+    assert summary["engine_summaries"][0]["metrics"]["command"][0] == PYTHON
+    findings = client.get(f"/v1/runs/{completed_run}/findings").json()
+    execution = next(item for item in findings if item["sub_category"] == "engine_runtime")
+    assert execution["metadata"]["command"][0] == PYTHON
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "resolved_spec.json",
+        "run_manifest.json",
+        "findings.json",
+        "run_summary.json",
+        "engine_invocations.json",
+        "raw/custom_script/local-http_engine_findings.json",
+        "raw/garak/local-http_stdout.log",
+    ],
+)
+def test_raw_download_is_refused_for_legacy_bundles_unless_allowlisted(
     client: TestClient, legacy_run: str, relative_path: str
 ):
     response = client.get(f"/v1/runs/{legacy_run}/artifacts/{relative_path}")
@@ -341,13 +374,19 @@ def test_raw_download_of_spec_bearing_files_is_refused_for_legacy_bundles(
     assert LEGACY_SECRET not in response.text
 
 
-def test_zip_is_refused_for_legacy_bundles_but_other_files_still_download(client: TestClient, legacy_run: str):
+@pytest.mark.parametrize(
+    "relative_path", ["scorecard.json", "artifacts_index.json", "report.md", "report.html", "report.csv"]
+)
+def test_legacy_bundle_allowlisted_files_still_download(client: TestClient, legacy_run: str, relative_path: str):
+    response = client.get(f"/v1/runs/{legacy_run}/artifacts/{relative_path}")
+    assert response.status_code == 200
+    assert LEGACY_SECRET not in response.text
+
+
+def test_zip_is_refused_for_legacy_bundles(client: TestClient, legacy_run: str):
     archive = client.get(f"/v1/runs/{legacy_run}/artifacts.zip")
     assert archive.status_code == 409
     assert LEGACY_SECRET not in archive.text
-
-    report = client.get(f"/v1/runs/{legacy_run}/artifacts/report.md")
-    assert report.status_code == 200
 
 
 def test_inline_artifact_responses_carry_csp_and_no_store(client: TestClient, completed_run: str):
