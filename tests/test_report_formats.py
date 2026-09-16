@@ -87,3 +87,6 @@ def test_render_html_escapes_attacker_controlled_text():
     assert "<td>&lt;metric&gt;</td>" in html
     assert "run-&lt;b&gt;id&lt;/b&gt;" in html
     assert "<b>id</b>" not in html
+    # Defense in depth for a file that gets emailed: no scripts can run even if a
+    # future interpolation site forgets to escape.
+    assert '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'" />' in html
