@@ -1364,10 +1364,10 @@ Endpoints:
 - `GET /v1/runs/{run_a}/diff/{run_b}` — cross-run comparison (`urt diff <a> <b>` prints the same JSON). Findings are matched by `category + sub_category + target_id` (`finding_id` embeds the run id, so it never matches across runs): `new` (only in B), `resolved` (only in A), `persisting`, each group with `count_a/b`, `max_severity_a/b` and the finding ids on both sides; `scorecard_delta` (counts, `asr_overall`, `eval_pass_rate`; `delta` = B − A), `asr_by_category_delta` and `eval_delta` (metric averages; `null` where one side lacks the key). `404` when either run has no findings yet
 - `GET /v1/targets/{target_id}/trend` — one point per run that included the target, oldest first: severity counts and ASR **computed from that target's findings**, plus `eval_pass_rate_run` (run-level, `null` without evaluators). `404` when no run has findings for the target
 - `GET /v1/runs/{run_id}/waiver-preview?control_id=&target_id=*` — the findings of this run a waiver with these ids would match (`count`, `matches[]` as gate rows). Uses the gate's own `control_matches()` / `target_matches()` server-side (exact match on category, sub_category, finding_id, engine, attack_vector or a framework label, or an `"X "` / `"X:"` prefix of one); expiry is not considered
-- `POST /v1/waivers` — `target_id`, `control_id`, `reason`, `owner`, `expires_at` (ISO-8601, `400` otherwise); response carries `active`
+- `POST /v1/waivers` — `target_id`, `control_id`, `reason`, `owner`, `expires_at` (ISO-8601, `400` otherwise); response carries `active`. A `waiver_id` that already exists answers `409` — waivers are never rewritten
 - `GET /v1/waivers[?target_id=&active=true|false]` — rows with `active`
-- `GET /v1/waivers/{waiver_id}` — row plus `events[]` (`created`, `expiry_changed`, `revoked`, `replaced`; `at`, `expires_at_before`, `expires_at_after`, `note`)
-- `PATCH /v1/waivers/{waiver_id}` — `{"revoke": true}` sets `expires_at` to now; `{"expires_at": "<iso>"}` moves it. Nothing else is mutable and there is **no delete**: waivers are append-only audit records (`urt waivers revoke --waiver-id` is the CLI face)
+- `GET /v1/waivers/{waiver_id}` — row plus `events[]` (`created`, `expiry_changed`, `revoked`; `at`, `expires_at_before`, `expires_at_after`, `note`)
+- `PATCH /v1/waivers/{waiver_id}` — `{"revoke": true}` (the JSON boolean, nothing truthy) sets `expires_at` to now and is **terminal**: any later `expires_at` change or second revoke answers `409` (extend = create a new waiver with a fresh reason and owner). `{"expires_at": "<iso>"}` moves the expiry of a live waiver. Nothing else is mutable and there is **no delete**: waivers are append-only audit records (`urt waivers revoke --waiver-id` is the CLI face)
 
 ### `/ui`: read-only pages on the same server
 
@@ -1396,9 +1396,12 @@ There is **no authentication**: `serve-api` binds `127.0.0.1` and refuses any
 other `--host` unless `--unsafe-allow-non-loopback` is passed; reach a remote
 machine through an SSH tunnel instead. Waivers are the only mutation the UI offers
 (create and revoke, never delete). Those form posts are CSRF-protected: a random
-token is set as an `HttpOnly; SameSite=Strict` cookie scoped to `/ui` and embedded
-in the form, both must match (`hmac.compare_digest`), and a request carrying
-`Origin` / `Referer` / `Sec-Fetch-Site` must be same-origin. Only
+nonce is set as an `HttpOnly; SameSite=Strict` cookie scoped to `/ui`; the form
+embeds that nonce or, once a session cookie exists, `HMAC(session, nonce)` so a
+cookie tossed by another localhost app can never match; both are compared with
+`hmac.compare_digest`; a request carrying `Origin` / `Referer` / `Sec-Fetch-Site`
+must be same-origin, and with a session a post carrying neither `Origin` nor
+`Sec-Fetch-Site` (no browser omits both) is refused. Only
 `application/x-www-form-urlencoded` bodies are accepted on the form routes (`415`
 otherwise), and the JSON API only parses `application/json`, so a cross-site HTML
 form cannot reach either.
