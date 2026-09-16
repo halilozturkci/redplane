@@ -1315,6 +1315,18 @@ Endpoints:
 - `POST /v1/waivers`
 - `GET /v1/waivers`
 
+`POST /v1/runs` is **synchronous**: the HTTP request blocks until the orchestrator
+returns. The only upper bound is the spec's `budget.max_duration_seconds` (profile
+defaults: `pr_gate` 900 s, `nightly` 3600 s, `weekly_deep` 14400 s), so HTTP clients,
+reverse proxies and uvicorn timeouts must be set above that or the caller will time
+out while the run keeps going and still lands in `GET /v1/runs`. Response contract:
+`400` when the spec fails `RunSpec.from_dict` validation (nothing is persisted),
+`500` with the failed run payload (`run_id`, `error`, `error_log_path`) when execution
+fails after the run was recorded, `200` with the completed run payload otherwise. For
+long runs prefer `urt run` in CI. An async job queue is tracked in
+[#18](https://github.com/halilozturkci/redplane/issues/18). Contract tests:
+`tests/test_api.py`.
+
 ## Network Gateway (Multi-Backend OpenAI Bridge)
 
 Use the network gateway when you want one OpenAI-compatible endpoint for multiple agent backends.
