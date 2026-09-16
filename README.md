@@ -1265,8 +1265,9 @@ meta pins the page's own inline script and stylesheet by sha256 — no
 redacted at read time and the page says so in a banner.
 
 `urt view <run_id>` serves the run directory at `http://127.0.0.1:8765/`
-(`/` is `report.html`, the only file rendered inline as HTML, with its CSP meta
-echoed as a response header) with the API's artifact rules (`src/urt/artifact_policy.py`):
+(`/` is `report.html`, the only file rendered inline as HTML; its own hash CSP meta
+is echoed as a response header when it is one the viewer rendered, otherwise a strict
+`default-src 'none'` fallback applies, so a pre-Phase-0 page cannot smuggle a policy) with the API's artifact rules (`src/urt/artifact_policy.py`):
 paths are confined to the run directory, text files are inline with `nosniff` +
 `default-src 'none'; sandbox`, everything else — including any other `.html` a
 tool left under `raw/` — is a `Content-Disposition: attachment` download, and for
@@ -1347,7 +1348,7 @@ uv run urt serve-api --host 127.0.0.1 --port 8000
 
 Endpoints:
 - `GET /healthz`
-- `GET /v1/runs[?gate_threshold=high]` — SQLite row plus bundle-derived fields: `targets`, `engines`, `evaluators`, `engines_executed`, `engines_skipped`, `finding_count`, `severity_counts`, `asr_overall`, `eval_pass_rate`, `duration_seconds`, `bundle_format_version`, `gate` (`threshold`, `ok`, `blocking_count`, `waived_count`; threshold defaults to the run profile's `gate_threshold`). Fields are `null` when the source file does not exist (failed runs), never zero-filled. `urt runs` prints the same rows.
+- `GET /v1/runs[?gate_threshold=high]` — SQLite row plus bundle-derived fields: `targets`, `engines`, `evaluators`, `engines_executed`, `engines_skipped`, `finding_count`, `severity_counts`, `asr_overall`, `eval_pass_rate`, `duration_seconds`, `bundle_format_version`, `gate` (`threshold`, `ok`, `blocking_count`, `waived_count`; threshold defaults to the run profile's `gate_threshold`). Fields are `null` when the source file does not exist (failed runs), never zero-filled; `error_message` is masked for runs whose bundle predates `1.1` (pre-1.1 error text may carry unscrubbed argv). `urt runs` prints the same rows.
 - `POST /v1/runs`
 - `GET /v1/runs/{run_id}`
 - `GET /v1/runs/{run_id}/findings` — sorted by severity rank (`SEVERITY_ORDER`), not lexically; each finding carries `evidence_artifacts` (bundle-relative form of the absolute `evidence_refs`, `null` for refs outside the run directory)

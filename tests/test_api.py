@@ -389,6 +389,35 @@ def test_zip_is_refused_for_legacy_bundles(client: TestClient, legacy_run: str):
     assert LEGACY_SECRET not in archive.text
 
 
+def test_run_rows_mask_sqlite_error_message_for_legacy_runs(legacy_failed_bundle, failed_bundle):
+    from conftest import LEGACY_SECRET
+
+    # legacy_failed_bundle mutates failed_bundle in place, so this client sees one
+    # legacy (1.0) failed run whose SQLite error_message carries argv with a secret.
+    api = TestClient(create_app(legacy_failed_bundle.orchestrator))
+    run_id = legacy_failed_bundle.run_id
+
+    listed = api.get("/v1/runs")
+    assert listed.status_code == 200
+    assert LEGACY_SECRET not in listed.text
+    [row] = [r for r in listed.json() if r["run_id"] == run_id]
+    assert row["error_message"] == "***REDACTED***"
+    assert row["bundle_format_version"] == "1.0"
+
+    single = api.get(f"/v1/runs/{run_id}")
+    assert single.status_code == 200
+    assert LEGACY_SECRET not in single.text
+    assert single.json()["error_message"] == "***REDACTED***"
+
+
+def test_run_rows_keep_error_message_for_current_bundles(client: TestClient):
+    failed = client.post("/v1/runs", json=failing_spec()).json()["detail"]
+    row = client.get(f"/v1/runs/{failed['run_id']}").json()
+    assert "fail_open=false" in row["error_message"]
+    [listed] = client.get("/v1/runs").json()
+    assert listed["error_message"] == row["error_message"]
+
+
 def test_inline_artifact_responses_carry_csp_and_no_store(client: TestClient, completed_run: str):
     for rel in ("scorecard.json", "report.md", "raw/garak/local-http_stdout.log"):
         response = client.get(f"/v1/runs/{completed_run}/artifacts/{rel}")
