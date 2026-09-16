@@ -53,6 +53,7 @@ RunSpec → Orchestrator.execute()
 - `adapters/engines/_command.py` — `CommandEngineAdapter` base for CLI-wrapped tools (most engines subclass this)
 - `adapters/evaluators/_command.py` — `CommandEvaluatorAdapter` base for CLI-wrapped evaluators
 - `normalization/` — `normalize_findings()` (severity/category mapping) + `build_scorecard()` (aggregation including eval_scores)
+- `specs.py` — spec builder backend: `capabilities()`, templates (`URT_TEMPLATES_DIR`), `validate_spec_payload()` (validate-only, `${VAR}`-only auth rule, redacted resolved spec, env var set/unset booleans), `probe_spec()` (shared with `urt probe`), form ↔ payload for `/ui/specs`
 - `diff.py` — cross-run identity key (`category + sub_category + target_id`), `diff_runs()` → `RunDiff`, `TrendPoint` (backs `urt diff`, `/v1/runs/{a}/diff/{b}`, `/v1/targets/{id}/trend`)
 - `report.py` — `render_markdown()`, `render_csv()`, `gate_result()`/`GateResult`, `evaluate_gate()` (waiver-aware); `render_html()` is a thin shim over `ui/`
 - `ui/` — viewer: `bundle.py` (`load_bundle()` → `RunBundle`: read-time redaction for pre-1.1 bundles, evidence paths, waiver matching, transcripts), `render.py` (Jinja2 templates, `render_run_page(mode="static"|"served")`, hash CSP), `view_server.py` (`urt view`), `templates/`, `static/`

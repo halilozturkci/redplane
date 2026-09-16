@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Redplane spec builder{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Spec builder</h1>
+<p class="note">
+  Build or paste a RunSpec, validate it and probe its targets. Nothing here runs an assessment: launching
+  runs stays on <code>urt run</code> until async runs land. Credentials go in as <code>${VAR}</code>
+  references only; the server reports whether a variable is set, never its value, and the resolved spec is
+  shown redacted. The form covers the common shape (one target); edit the YAML for anything else.
+</p>
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
+<h2>Start from a template</h2>
+<form class="filters" method="get" action="/ui/specs">
+  <label>Template
+    <select name="template">
+      <option value="">blank</option>
+      {% for row in templates %}
+      <option value="{{ row.name }}"{% if row.name == template_name %} selected{% endif %}>{{ row.name }} — {{ row.kind }}{% if row.description %}: {{ row.description | truncate(60) }}{% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Load template</button>
+</form>
+<ul class="template-list">
+  {% for row in templates %}
+  <li><a href="/ui/specs?template={{ row.name | urlencode }}" class="mono">{{ row.name }}</a>
+    {% if row.kind == "smoke" %}<span class="badge kind">smoke</span>{% else %}<span class="badge fail">real</span>{% endif %}
+    <span class="muted">{{ row.run_profile }} · targets {{ row.targets | join(", ") or "—" }} · engines {{ row.engines | join(", ") or "—" }}</span>
+    {% if row.description %}<div class="note">{{ row.description }}</div>{% endif %}
+  </li>
+  {% endfor %}
+  {% if not templates %}<li class="muted">No <code>run_spec*.yaml</code> templates found under <code>{{ templates_dir }}</code> (set <code>URT_TEMPLATES_DIR</code>).</li>{% endif %}
+</ul>
+<p class="note">A template is labelled <strong>smoke</strong> only when its <code>metadata.spec_kind</code> says so (launcher presence, not an assessment); everything else is shown as <strong>real</strong>.</p>
+
+<div class="builder">
+<section>
+<h2>Form</h2>
+<form method="post" action="/ui/specs/build" class="spec-form">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+  <label>Name <input type="text" name="name" value="{{ form.name }}" required></label>
+  <label>Run profile
+    <select name="run_profile">
+      {% for profile in caps.profiles %}<option value="{{ profile }}"{% if form.run_profile == profile %} selected{% endif %}>{{ profile }} (budget {{ caps.profile_defaults[profile].budget.max_duration_seconds }} s, engine timeout {{ caps.profile_defaults[profile].timeouts.engine_seconds }} s)</option>{% endfor %}
+    </select>
+  </label>
+  <label>Evidence level
+    <select name="evidence_level">{% for level in caps.evidence_levels %}<option value="{{ level }}"{% if form.evidence_level == level %} selected{% endif %}>{{ level }}</option>{% endfor %}</select>
+  </label>
+  <label>Seed <input type="text" name="seed" value="{{ form.seed }}" placeholder="optional integer"></label>
+  <label>Spec kind <input type="text" name="spec_kind" value="{{ form.spec_kind }}" placeholder="smoke to label a launcher-presence spec"></label>
+  <fieldset>
+    <legend>Target</legend>
+    <label>Id <input type="text" name="target_id" value="{{ form.target_id }}" required></label>
+    <label>Type <select name="target_type">{% for kind in caps.targets %}<option value="{{ kind }}"{% if form.target_type == kind %} selected{% endif %}>{{ kind }}</option>{% endfor %}</select></label>
+    <label>Endpoint <input type="text" name="target_endpoint" value="{{ form.target_endpoint }}" placeholder="https://… (may be ${VAR})"></label>
+    <label>Auth
+      <select name="target_auth_mode">
+        {% for mode, label in [("none", "none"), ("bearer", "Authorization: Bearer ${VAR}"), ("api_key", "api_key: ${VAR}"), ("header", "custom header: ${VAR}")] %}
+        <option value="{{ mode }}"{% if form.target_auth_mode == mode %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Environment variable name <input type="text" name="target_auth_var" value="{{ form.target_auth_var }}" placeholder="MY_TOKEN (never the value)" pattern="[A-Za-z_][A-Za-z0-9_]*">
+      {% if auth_var_set is not none %}<span class="note">{{ form.target_auth_var }} is {% if auth_var_set %}<strong>set</strong>{% else %}<strong>not set</strong>{% endif %} in the server environment</span>{% endif %}
+    </label>
+    <label>Header name (custom header mode) <input type="text" name="target_auth_header" value="{{ form.target_auth_header }}" placeholder="Ocp-Apim-Subscription-Key"></label>
+    <label class="choice"><input type="checkbox" name="target_skip_healthcheck"{% if form.target_skip_healthcheck %} checked{% endif %}> skip healthcheck</label>
+  </fieldset>
+  <fieldset>
+    <legend>Engines</legend>
+    {% for engine in caps.engines %}
+    <div class="engine-row">
+      <label class="choice"><input type="checkbox" name="engine_{{ engine }}"{% if form.get("engine_" ~ engine) %} checked{% endif %}> {{ engine }}</label>
+      <input type="text" name="engine_{{ engine }}_command" value="{{ form.get('engine_' ~ engine ~ '_command', '') }}" placeholder="params.command (optional)" class="mono">
+    </div>
+    {% endfor %}
+  </fieldset>
+  <fieldset>
+    <legend>Evaluators</legend>
+    {% for evaluator in caps.evaluators %}
+    <label class="choice"><input type="checkbox" name="evaluator_{{ evaluator }}"{% if form.get("evaluator_" ~ evaluator) %} checked{% endif %}> {{ evaluator }}</label>
+    {% endfor %}
+  </fieldset>
+  <fieldset>
+    <legend>Policy profiles (framework mappings)</legend>
+    {% for profile in caps.policy_profiles %}
+    <label class="choice"><input type="checkbox" name="policy_{{ profile }}"{% if form.get("policy_" ~ profile) %} checked{% endif %}> {{ profile }}</label>
+    {% endfor %}
+  </fieldset>
+  <div class="actions"><button type="submit">Build YAML from form →</button></div>
+</form>
+</section>
+
+<section>
+<h2>YAML</h2>
+<form method="post" action="/ui/specs/validate" class="yaml-form"
+      hx-post="/ui/specs/validate" hx-target="#spec-result" hx-select="#spec-result" hx-swap="outerHTML" hx-push-url="false">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+  <textarea name="yaml" rows="28" class="mono" spellcheck="false">{{ yaml_text }}</textarea>
+  <div class="actions">
+    <button type="submit">Validate</button>
+    <button type="submit" formaction="/ui/specs/probe" hx-post="/ui/specs/probe">Probe targets</button>
+    <button type="submit" formaction="/ui/specs/load" formmethod="post" hx-post="/ui/specs/load" hx-target="body" hx-select="body" hx-swap="outerHTML">← Load YAML into form</button>
+  </div>
+</form>
+<div id="spec-result" class="spec-result">
+  {% if validation %}
+  <h3>Validation</h3>
+  {% if validation.ok %}
+  <p class="gate-verdict ok">Validation OK</p>
+  {% else %}
+  <p class="gate-verdict fail">Validation failed</p>
+  <ul>{% for err in validation.errors %}<li>{{ err }}</li>{% endfor %}</ul>
+  {% endif %}
+  <p>Kind: {% if validation.kind == "smoke" %}<span class="badge kind">smoke</span>{% else %}<span class="badge fail">real</span>{% endif %}
+    {% if validation.spec_kind %}<span class="mono">metadata.spec_kind = {{ validation.spec_kind }}</span>{% else %}<span class="muted">no metadata.spec_kind</span>{% endif %}</p>
+  <h4>Environment variables referenced</h4>
+  {% if validation.env_vars %}
+  <ul>{% for var in validation.env_vars %}<li><span class="mono">${{ "{" }}{{ var.name }}{{ "}" }}</span> — {% if var.set %}<span class="badge ok">set</span>{% else %}<span class="badge fail">not set</span>{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">None.</p>{% endif %}
+  <h4>Profile defaults ({{ validation.profile_defaults and "applied where the spec omits budget/timeouts" or "unknown profile" }})</h4>
+  <pre>{{ validation.profile_defaults | pretty_json }}</pre>
+  {% if validation.resolved_spec %}
+  <details open><summary>Resolved spec (redacted)</summary><pre>{{ validation.resolved_spec | pretty_json }}</pre></details>
+  {% endif %}
+  {% endif %}
+  {% if probe is not none %}
+  <h3>Probe</h3>
+  <table>
+    <thead><tr><th>Target</th><th>Type</th><th>OK</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for row in probe %}
+      <tr><td>{{ row.target_id }}</td><td>{{ row.type }}</td><td><span class="badge {{ 'ok' if row.ok else 'fail' }}">{{ "ok" if row.ok else "fail" }}</span></td><td>{{ row.detail }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if not validation and probe is none %}<p class="muted">Validate or probe to see results here.</p>{% endif %}
+</div>
+</section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}
