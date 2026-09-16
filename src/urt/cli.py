@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -410,6 +411,13 @@ def cmd_serve_api(args: argparse.Namespace) -> int:
     except ImportError:
         print("uvicorn is required for API serving. Install dependencies first.", file=sys.stderr)
         return 1
+
+    # The app is built by `urt.api:create_app` inside uvicorn, which only sees the
+    # environment; hand the global store options over, without overriding an explicit env.
+    if args.artifact_root != DEFAULT_ARTIFACT_ROOT or "URT_ARTIFACT_ROOT" not in os.environ:
+        os.environ["URT_ARTIFACT_ROOT"] = args.artifact_root
+    if args.metadata_db != DEFAULT_METADATA_DB or "URT_METADATA_DB" not in os.environ:
+        os.environ["URT_METADATA_DB"] = args.metadata_db
 
     uvicorn.run(
         "urt.api:create_app",

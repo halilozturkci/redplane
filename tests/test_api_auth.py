@@ -128,3 +128,26 @@ def test_serve_api_non_loopback_needs_key_or_explicit_unsafe_flag(monkeypatch, c
     assert calls[-1]["host"] == "0.0.0.0"
     assert cli.main(["serve-api"]) == 0
     assert calls[-1]["host"] == "127.0.0.1"
+
+
+def test_serve_api_passes_store_paths_to_the_app_factory(monkeypatch):
+    """`urt --artifact-root X --metadata-db Y serve-api` must serve those stores, not the
+    defaults: the uvicorn factory can only see them through the environment."""
+    import os
+    import sys
+
+    import urt.cli as cli
+
+    calls: list[dict] = []
+    fake_uvicorn = type("U", (), {"run": staticmethod(lambda *a, **kw: calls.append(kw))})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    monkeypatch.delenv("URT_ARTIFACT_ROOT", raising=False)
+    monkeypatch.delenv("URT_METADATA_DB", raising=False)
+
+    assert cli.main(["--artifact-root", "/tmp/x/artifacts", "--metadata-db", "/tmp/x/meta.sqlite3", "serve-api"]) == 0
+    assert os.environ["URT_ARTIFACT_ROOT"] == "/tmp/x/artifacts"
+    assert os.environ["URT_METADATA_DB"] == "/tmp/x/meta.sqlite3"
+
+    monkeypatch.setenv("URT_ARTIFACT_ROOT", "/from/env")
+    assert cli.main(["serve-api"]) == 0  # CLI defaults never override an explicit environment
+    assert os.environ["URT_ARTIFACT_ROOT"] == "/from/env"
