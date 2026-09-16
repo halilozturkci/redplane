@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from pathlib import Path
 
 import pytest
 from conftest import LEGACY_SECRET, PYTHON, TARGET_ID, Bundle, bundle_spec
