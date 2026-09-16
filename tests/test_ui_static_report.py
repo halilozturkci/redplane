@@ -123,7 +123,7 @@ def test_static_page_shows_scorecard_tiles_eval_table_matrix_and_files(rich_bund
     # The page cannot know its own final hash.
     assert index["report.html"]["sha256"] not in html
 
-    assert f'data-engine="garak"' in html
+    assert 'data-engine="garak"' in html
     assert "engine_skipped" in html
     assert "coverage_gap" in html
 
