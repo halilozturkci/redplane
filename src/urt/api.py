@@ -8,14 +8,73 @@ returns, bounded only by `budget.max_duration_seconds` (14400 s for
 from __future__ import annotations
 
 import os
+import re
 import uuid
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi.responses import FileResponse
 
-from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB, SEVERITY_ORDER
+from .constants import (
+    DEFAULT_ARTIFACT_ROOT,
+    DEFAULT_METADATA_DB,
+    LEGACY_RAW_DOWNLOAD_ALLOWLIST,
+    REDACTED_BUNDLE_MIN_VERSION,
+    SEVERITY_ORDER,
+)
 from .orchestrator import Orchestrator
+from .storage.artifact_store import ArtifactPathError
 from .types import RunSpec, ValidationError
+
+# Bundle files exposed as JSON content (G1). Never accept a path from the client here.
+BUNDLE_JSON_ENDPOINTS = {
+    "scorecard": "scorecard.json",
+    "summary": "run_summary.json",
+    "manifest": "run_manifest.json",
+    "invocations": "engine_invocations.json",
+}
+
+# Served inline. Everything else is an attachment with a generic type so the
+# browser never renders attacker-influenced tool output in the API origin.
+INLINE_MEDIA_TYPES = {
+    ".json": "application/json",
+    ".jsonl": "application/x-ndjson",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".log": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".yaml": "text/plain; charset=utf-8",
+    ".yml": "text/plain; charset=utf-8",
+}
+ATTACHMENT_MEDIA_TYPES = {
+    ".html": "text/html; charset=utf-8",
+}
+
+
+_ARTIFACT_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    # Artifacts are attacker-influenced tool output; never let them script or be
+    # cached if a UI is ever served from this origin.
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "no-store",
+}
+
+
+def _artifact_response(path: Path, relative_path: str) -> FileResponse:
+    suffix = path.suffix.lower()
+    headers = dict(_ARTIFACT_HEADERS)
+    if suffix in INLINE_MEDIA_TYPES:
+        return FileResponse(path, media_type=INLINE_MEDIA_TYPES[suffix], headers=headers)
+    media_type = ATTACHMENT_MEDIA_TYPES.get(suffix, "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers=headers,
+        filename=Path(relative_path).name,
+        content_disposition_type="attachment",
+    )
 
 
 def _build_orchestrator() -> Orchestrator:
@@ -40,9 +99,17 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    def _check_threshold(threshold: str | None) -> None:
+        if threshold is not None and threshold.lower() not in SEVERITY_ORDER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported threshold '{threshold}'. Supported: {list(SEVERITY_ORDER)}",
+            )
+
     @app.get("/v1/runs")
-    def list_runs() -> list[dict[str, Any]]:
-        return orch.list_runs()
+    def list_runs(gate_threshold: str | None = Query(default=None)) -> list[dict[str, Any]]:
+        _check_threshold(gate_threshold)
+        return orch.list_runs(gate_threshold=gate_threshold)
 
     @app.post("/v1/runs")
     def create_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -70,6 +137,71 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
         _require_run(run_id)
         return orch.list_artifacts(run_id)
 
+    def _require_redacted_bundle(run_id: str) -> None:
+        if orch.bundle_is_redacted(run_id):
+            return
+        version = orch.bundle_format_version(run_id) or "unknown"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Bundle format version {version} predates write-time redaction "
+                f"({REDACTED_BUNDLE_MIN_VERSION}); only {list(LEGACY_RAW_DOWNLOAD_ALLOWLIST)} are served "
+                "raw for such bundles, and the zip is not. Other files may contain expanded credentials. "
+                "Use the JSON endpoints (/manifest, /summary, /invocations, /findings), which redact "
+                "at read time. See README 'Output, Reports, and Audit Format'."
+            ),
+        )
+
+    @app.get("/v1/runs/{run_id}/artifacts.zip")
+    def get_artifacts_zip(run_id: str) -> Response:
+        _require_run(run_id)
+        _require_redacted_bundle(run_id)
+        try:
+            payload = orch.artifact_zip(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Run directory not found") from exc
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", run_id)
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={
+                **_ARTIFACT_HEADERS,
+                "Content-Disposition": f'attachment; filename="{safe_name}.zip"',
+            },
+        )
+
+    @app.get("/v1/runs/{run_id}/artifacts/{relative_path:path}")
+    def get_artifact_file(run_id: str, relative_path: str) -> FileResponse:
+        _require_run(run_id)
+        if relative_path not in LEGACY_RAW_DOWNLOAD_ALLOWLIST:
+            _require_redacted_bundle(run_id)
+        try:
+            path = orch.artifact_path(run_id, relative_path)
+        except ArtifactPathError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid artifact path: {exc}") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+        return _artifact_response(path, relative_path)
+
+    for endpoint_name, bundle_file in BUNDLE_JSON_ENDPOINTS.items():
+
+        def _make_bundle_reader(file_name: str) -> Callable[[str], Any]:
+            def read_bundle(run_id: str) -> Any:
+                _require_run(run_id)
+                content = orch.read_bundle_json(run_id, file_name)
+                if content is None:
+                    raise HTTPException(status_code=404, detail=f"{file_name} not available for run")
+                return content
+
+            read_bundle.__name__ = f"get_{file_name.removesuffix('.json')}"
+            return read_bundle
+
+        app.add_api_route(
+            f"/v1/runs/{{run_id}}/{endpoint_name}",
+            _make_bundle_reader(bundle_file),
+            methods=["GET"],
+        )
+
     @app.get("/v1/runs/{run_id}/gate")
     def get_gate(
         run_id: str,
@@ -77,11 +209,7 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
         ignore_waivers: bool = Query(default=False),
     ) -> dict[str, Any]:
         _require_run(run_id)
-        if threshold.lower() not in SEVERITY_ORDER:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported threshold '{threshold}'. Supported: {list(SEVERITY_ORDER)}",
-            )
+        _check_threshold(threshold)
         result = orch.gate(run_id, threshold=threshold, ignore_waivers=ignore_waivers)
         if result is None:
             raise HTTPException(status_code=404, detail="Findings not available for run")

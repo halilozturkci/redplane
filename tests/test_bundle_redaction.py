@@ -34,6 +34,8 @@ SECRET_ENDPOINT_KEY = "endpoint-query-key-abcdef123456"
 SECRET_ARGV = "argv-secret-passed-on-command-line-777"
 SECRET_ENGINE_ENV = "engine-env-openai-key-should-not-leak"
 SECRET_EVAL_ENV = "evaluator-env-token-should-not-leak"
+# An env name no key heuristic matches; the value is still a params.env value.
+SECRET_PLAIN_ENV = "plain-named-env-value-should-not-leak"
 ALL_SECRETS = (
     SECRET_BEARER,
     SECRET_API_KEY,
@@ -42,12 +44,13 @@ ALL_SECRETS = (
     SECRET_ARGV,
     SECRET_ENGINE_ENV,
     SECRET_EVAL_ENV,
+    SECRET_PLAIN_ENV,
 )
 
 # Echoes argv and the env it received to stdout/stderr, like a chatty real tool.
 ECHO_LAUNCHER = (
     f"{PYTHON} -c \"import os,sys;print(sys.argv);"
-    "print(os.environ.get('OPENAI_API_KEY'));"
+    "print(os.environ.get('OPENAI_API_KEY'), os.environ.get('ECHO'));"
     "print(os.environ.get('EVAL_TOKEN'), file=sys.stderr)\""
 )
 
@@ -59,6 +62,7 @@ ENV = {
     "URT_T_ARGV": SECRET_ARGV,
     "URT_T_ENGINE_ENV": SECRET_ENGINE_ENV,
     "URT_T_EVAL_ENV": SECRET_EVAL_ENV,
+    "URT_T_PLAIN_ENV": SECRET_PLAIN_ENV,
 }
 
 
@@ -92,7 +96,7 @@ def _spec_payload(*, expanded: bool) -> dict:
                 "name": "promptfoo",
                 "params": {
                     "command": f"{ECHO_LAUNCHER} --api-key {v('URT_T_ARGV')}",
-                    "env": {"OPENAI_API_KEY": v("URT_T_ENGINE_ENV")},
+                    "env": {"OPENAI_API_KEY": v("URT_T_ENGINE_ENV"), "ECHO": v("URT_T_PLAIN_ENV")},
                 },
             }
         ],
@@ -163,6 +167,8 @@ def test_collect_secret_values_takes_auth_leaves_and_sensitive_keys_and_bearer_t
     values = collect_secret_values(RunSpec.from_dict(_spec_payload(expanded=True)).to_dict())
 
     assert {SECRET_BEARER, SECRET_API_KEY, SECRET_TENANT, SECRET_ENGINE_ENV, SECRET_EVAL_ENV} <= values
+    # Every params.env value is a secret by position, whatever its name (API-literal path).
+    assert SECRET_PLAIN_ENV in values
     # The bare token behind "Bearer " is a secret in its own right.
     assert SECRET_BEARER.removeprefix("Bearer ") in values
     # Values that are not credentials by key or position are not collected.
@@ -260,7 +266,7 @@ def test_run_writes_nothing_secret_to_disk_sqlite_or_stdout(tmp_path: Path, monk
     findings = json.loads((run_dir / "findings.json").read_text(encoding="utf-8"))
     engine_exec = next(f for f in findings if f["sub_category"] == "engine_runtime")
     assert "env_overrides" not in engine_exec["metadata"]
-    assert engine_exec["metadata"]["env_override_keys"] == ["OPENAI_API_KEY"]
+    assert engine_exec["metadata"]["env_override_keys"] == ["ECHO", "OPENAI_API_KEY"]
     assert REDACTED in engine_exec["metadata"]["command"]
 
     manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
@@ -283,7 +289,7 @@ def test_api_submitted_spec_is_scrubbed_by_credential_values_too(tmp_path: Path)
     result = orchestrator.execute(RunSpec.from_dict(payload))
     assert result["status"] == "completed"
 
-    for secret in (SECRET_BEARER, SECRET_API_KEY, SECRET_TENANT, SECRET_ENGINE_ENV, SECRET_EVAL_ENV):
+    for secret in (SECRET_BEARER, SECRET_API_KEY, SECRET_TENANT, SECRET_ENGINE_ENV, SECRET_EVAL_ENV, SECRET_PLAIN_ENV):
         assert secret not in json.dumps(result), f"{secret!r} in execute() result"
         for path in (tmp_path / "artifacts" / result["run_id"]).rglob("*"):
             if path.is_file():

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import re
 import traceback
 import uuid
 from dataclasses import asdict
@@ -20,13 +20,26 @@ from .constants import (
     BUNDLE_FORMAT_VERSION,
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_METADATA_DB,
+    DEFAULT_RUN_PROFILE,
+    REDACTED_BUNDLE_MIN_VERSION,
+    RUN_PROFILE_DEFAULTS,
+    SEVERITY_ORDER,
 )
 from .normalization import build_scorecard, normalize_findings
-from .redaction import Scrubber, redact_run_spec_payload
+from .redaction import Scrubber, redact_bundle_payload, redact_run_spec_payload
 from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
 from .types import EngineRunResult, EvalRunResult, RunRecord, RunSpec, UnifiedFinding
+
+
+def _parse_version(value: str | None) -> tuple[int, ...]:
+    if not value:
+        return (0,)
+    try:
+        return tuple(int(part) for part in str(value).split("."))
+    except ValueError:
+        return (0,)
 
 
 class Orchestrator:
@@ -47,7 +60,9 @@ class Orchestrator:
 
     @staticmethod
     def _new_run_id(spec: RunSpec) -> str:
-        slug = spec.name.lower().replace(" ", "-")
+        # The run id is a directory name, a URL segment and a Content-Disposition
+        # filename; keep it to a safe alphabet.
+        slug = re.sub(r"[^a-z0-9._-]+", "-", spec.name.lower()).strip("-") or "run"
         ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         return f"run-{slug}-{ts}-{uuid.uuid4().hex[:8]}"
 
@@ -449,21 +464,137 @@ class Orchestrator:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         return self.metadata_store.get_run(run_id)
 
-    def list_runs(self) -> list[dict[str, Any]]:
-        return self.metadata_store.list_runs()
+    def list_runs(self, *, gate_threshold: str | None = None) -> list[dict[str, Any]]:
+        """Run rows enriched from the bundle (targets, engines, counts, ASR, gate summary).
+
+        Fields whose source file is absent (e.g. failed runs without a scorecard) are
+        None rather than zero. `gate_threshold` defaults to the run profile's
+        `gate_threshold`; pass one explicitly to evaluate every row at that level.
+        """
+        if gate_threshold is not None and gate_threshold.lower() not in SEVERITY_ORDER:
+            raise ValueError(f"Unsupported threshold: {gate_threshold}")
+        waivers = self.list_waivers()
+        return [
+            self._enrich_run_row(row, waivers=waivers, gate_threshold=gate_threshold)
+            for row in self.metadata_store.list_runs()
+        ]
+
+    def _enrich_run_row(
+        self,
+        row: dict[str, Any],
+        *,
+        waivers: list[dict[str, Any]],
+        gate_threshold: str | None,
+    ) -> dict[str, Any]:
+        run_id = row["run_id"]
+        scorecard = self.artifact_store.read_json(run_id, "scorecard.json")
+        summary = self.artifact_store.read_json(run_id, "run_summary.json") or {}
+        manifest = self.artifact_store.read_json(run_id, "run_manifest.json") or {}
+        resolved_spec = self.artifact_store.read_json(run_id, "resolved_spec.json") or {}
+
+        engine_summaries = summary.get("engine_summaries", [])
+        executed = sorted({s["engine"] for s in engine_summaries if s.get("status") != "skipped"})
+        skipped = sorted({s["engine"] for s in engine_summaries if s.get("status") == "skipped"} - set(executed))
+
+        enriched = dict(row)
+        enriched.update(
+            {
+                "targets": summary.get("targets") or [t.get("target_id") for t in resolved_spec.get("targets", [])],
+                "engines": summary.get("engines") or [e.get("name") for e in resolved_spec.get("engines", [])],
+                "evaluators": summary.get("evaluators") or [e.get("name") for e in resolved_spec.get("evaluators", [])],
+                "engines_executed": executed,
+                "engines_skipped": skipped,
+                "finding_count": scorecard.get("total_findings") if scorecard else None,
+                "severity_counts": (
+                    {level: scorecard.get(level) for level in ("critical", "high", "medium", "low", "info")}
+                    if scorecard
+                    else None
+                ),
+                "asr_overall": scorecard.get("asr_overall") if scorecard else None,
+                "eval_pass_rate": scorecard.get("eval_pass_rate") if scorecard else None,
+                "duration_seconds": manifest.get("duration_seconds"),
+                "bundle_format_version": manifest.get("bundle_format_version"),
+                "gate": self._gate_summary(row, waivers=waivers, threshold=gate_threshold),
+            }
+        )
+        return enriched
+
+    def _gate_summary(
+        self,
+        row: dict[str, Any],
+        *,
+        waivers: list[dict[str, Any]],
+        threshold: str | None,
+    ) -> dict[str, Any] | None:
+        findings_path = row.get("findings_path")
+        if not findings_path or not Path(findings_path).exists():
+            return None
+        profile_defaults = RUN_PROFILE_DEFAULTS.get(row.get("profile", ""), RUN_PROFILE_DEFAULTS[DEFAULT_RUN_PROFILE])
+        effective = (threshold or profile_defaults.get("gate_threshold", "high")).lower()
+        result = gate_result(load_findings(findings_path), threshold=effective, waivers=waivers)
+        return {
+            "threshold": effective,
+            "ok": result.ok,
+            "blocking_count": len(result.blocking),
+            "waived_count": len(result.waived),
+        }
 
     def get_findings(self, run_id: str) -> list[dict[str, Any]]:
-        return self.metadata_store.get_findings(run_id)
+        # Read-time key redaction covers rows written by pre-1.1 code (e.g. the
+        # `metadata.env_overrides` dict); write-time scrubbing covers everything else.
+        findings = redact_bundle_payload(
+            self.metadata_store.get_findings(run_id), legacy=not self.bundle_is_redacted(run_id)
+        )
+        for item in findings:
+            # evidence_refs are absolute filesystem paths; expose the bundle-relative
+            # form so clients can fetch them through the artifact endpoints.
+            item["evidence_artifacts"] = [
+                self.artifact_store.relative_artifact_path(run_id, str(ref))
+                for ref in item.get("evidence_refs", [])
+            ]
+        return findings
 
     def list_artifacts(self, run_id: str) -> list[dict[str, Any]]:
         run = self.metadata_store.get_run(run_id)
         if not run:
             return []
-        run_root = self.artifact_store.run_dir(run_id)
-        index_path = run_root / "artifacts_index.json"
-        if index_path.exists():
-            return json.loads(index_path.read_text(encoding="utf-8"))
-        return build_artifacts_index(run_root)
+        index = self.artifact_store.read_json(run_id, "artifacts_index.json")
+        if index is not None:
+            return index
+        return build_artifacts_index(self.artifact_store.run_dir(run_id))
+
+    def read_bundle_json(self, run_id: str, file_name: str) -> Any | None:
+        """Content of one bundle JSON file (`AUDIT_BUNDLE_FILES`), None when absent."""
+        if file_name not in AUDIT_BUNDLE_FILES or not file_name.endswith(".json"):
+            raise ValueError(f"Not a bundle JSON file: {file_name}")
+        if not self.metadata_store.get_run(run_id):
+            return None
+        content = self.artifact_store.read_json(run_id, file_name)
+        if content is None:
+            return None
+        return redact_bundle_payload(content, legacy=not self.bundle_is_redacted(run_id))
+
+    def bundle_format_version(self, run_id: str) -> str | None:
+        manifest = self.artifact_store.read_json(run_id, "run_manifest.json")
+        if not isinstance(manifest, dict):
+            return None
+        version = manifest.get("bundle_format_version")
+        return None if version is None else str(version)
+
+    def bundle_is_redacted(self, run_id: str) -> bool:
+        """True when the bundle was written with write-time redaction (>= 1.1).
+
+        Pre-1.1 bundles may hold expanded credentials in the spec-bearing files, so
+        raw downloads of those files and of the whole directory must be refused.
+        """
+        return _parse_version(self.bundle_format_version(run_id)) >= _parse_version(REDACTED_BUNDLE_MIN_VERSION)
+
+    def artifact_path(self, run_id: str, relative_path: str) -> Path:
+        """Filesystem path of one artifact, confined to the run directory (see ArtifactStore)."""
+        return self.artifact_store.resolve_artifact(run_id, relative_path)
+
+    def artifact_zip(self, run_id: str) -> bytes:
+        return self.artifact_store.zip_run(run_id)
 
     def gate(
         self,

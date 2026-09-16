@@ -59,6 +59,44 @@ def redact_run_spec_payload(spec_payload: dict[str, Any]) -> dict[str, Any]:
     return redact_payload(out)
 
 
+# Pre-1.1 finding metadata carried the params.env dict under this key; 1.1 records
+# `env_override_keys` (names only). Any surviving dict here is credentials by position.
+LEGACY_ENV_DICT_KEY = "env_overrides"
+# Argv fields that pre-1.1 bundles wrote without value scrubbing.
+_ARGV_KEYS = {"command"}
+
+
+def _mask_positional(value: Any, *, legacy: bool) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            name = str(key)
+            if name == LEGACY_ENV_DICT_KEY or (legacy and name in _ARGV_KEYS):
+                out[name] = _mask_leaves(item)
+            else:
+                out[name] = _mask_positional(item, legacy=legacy)
+        return out
+    if isinstance(value, list):
+        return [_mask_positional(item, legacy=legacy) for item in value]
+    return value
+
+
+def redact_bundle_payload(content: Any, *, legacy: bool = False) -> Any:
+    """Read-time redaction for bundle JSON of any format version.
+
+    Dict payloads (spec, manifest, summary) get the spec rules (auth leaves +
+    key heuristics); lists (findings, invocations) get the key heuristics. Any
+    `env_overrides` dict is masked by position. With `legacy=True` (bundle written
+    before value scrubbing existed) `command` argv is masked too, since a secret
+    passed on the command line was never scrubbed from it.
+    """
+    if isinstance(content, dict):
+        redacted = redact_run_spec_payload(content)
+    else:
+        redacted = redact_payload(content)
+    return _mask_positional(redacted, legacy=legacy)
+
+
 def _leaf_strings(value: Any) -> Iterable[str]:
     if isinstance(value, dict):
         for item in value.values():
@@ -93,13 +131,20 @@ def _with_bare_tokens(values: Iterable[str]) -> set[str]:
 
 
 def collect_secret_values(spec_payload: dict[str, Any]) -> set[str]:
-    """Secret values the key/position rules would mask: target `auth` leaves and
-    values of sensitive keys anywhere in the spec (plus the bare token behind a
-    `Bearer `/`Basic ` prefix)."""
+    """Secret values by position or key: target `auth` leaves, every
+    `engines[].params.env` / `evaluators[].params.env` value (adapters already treat
+    them as credentials and record keys only), and values of sensitive keys anywhere
+    in the spec (plus the bare token behind a `Bearer `/`Basic ` prefix)."""
     values: set[str] = set()
     for target in spec_payload.get("targets", []) or []:
         if isinstance(target, dict):
             values.update(_leaf_strings(target.get("auth", {})))
+    for section in ("engines", "evaluators"):
+        for item in spec_payload.get(section, []) or []:
+            if isinstance(item, dict):
+                params = item.get("params") or {}
+                if isinstance(params, dict):
+                    values.update(_leaf_strings(params.get("env", {})))
     values.update(_sensitive_values(spec_payload))
     return _with_bare_tokens(values)
 

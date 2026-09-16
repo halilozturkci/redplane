@@ -1217,8 +1217,9 @@ redaction layers apply at write time (`src/urt/redaction.py`):
   target `auth` value and any key matching `*token*`, `*secret*`, `*password*`,
   `api_key`, `authorization` is replaced by `***REDACTED***`.
 - **Value scrubbing** — the set of known secret values (every `${VAR}` substitution
-  made by `load_run_spec`, plus every value the key/position rules mask, plus the bare
-  token behind a `Bearer `/`Basic ` prefix) is replaced wherever it appears as a
+  made by `load_run_spec`, plus every target `auth` leaf and every `params.env` value,
+  plus every value the key rules mask, plus the bare token behind a `Bearer `/`Basic `
+  prefix) is replaced wherever it appears as a
   substring in anything the run writes or prints: `params.command` argv,
   `endpoint` query strings, `metrics.command`, raw tool stdout/stderr, sidecars,
   tracebacks, `run_error.log`, SQLite findings and `error_message`, `urt run` /
@@ -1228,8 +1229,9 @@ redaction layers apply at write time (`src/urt/redaction.py`):
 
 Limits, stated plainly: values shorter than 8 characters are not value-scrubbed
 (still masked by key rules); specs submitted to `POST /v1/runs` carry no `${VAR}`
-knowledge, so only credential *values* found by the key/position rules are scrubbed
-there; a tool that transforms a secret (base64, hashing, splitting) before echoing
+knowledge, so only `auth` leaves, `params.env` values and key-rule matches are
+scrubbed there — a literal secret inside `params.command` or `endpoint` is the
+caller's responsibility; a tool that transforms a secret (base64, hashing, splitting) before echoing
 it defeats substring scrubbing. `urt serve-gateway --print-effective-config` applies
 the key/position rules. Bundles written before `1.1` (`1.0`) may contain expanded
 credentials; treat them as sensitive.
@@ -1308,11 +1310,14 @@ uv run urt serve-api --host 127.0.0.1 --port 8000
 
 Endpoints:
 - `GET /healthz`
-- `GET /v1/runs`
+- `GET /v1/runs[?gate_threshold=high]` — SQLite row plus bundle-derived fields: `targets`, `engines`, `evaluators`, `engines_executed`, `engines_skipped`, `finding_count`, `severity_counts`, `asr_overall`, `eval_pass_rate`, `duration_seconds`, `bundle_format_version`, `gate` (`threshold`, `ok`, `blocking_count`, `waived_count`; threshold defaults to the run profile's `gate_threshold`). Fields are `null` when the source file does not exist (failed runs), never zero-filled. `urt runs` prints the same rows.
 - `POST /v1/runs`
 - `GET /v1/runs/{run_id}`
-- `GET /v1/runs/{run_id}/findings`
-- `GET /v1/runs/{run_id}/artifacts`
+- `GET /v1/runs/{run_id}/findings` — sorted by severity rank (`SEVERITY_ORDER`), not lexically; each finding carries `evidence_artifacts` (bundle-relative form of the absolute `evidence_refs`, `null` for refs outside the run directory)
+- `GET /v1/runs/{run_id}/scorecard` · `/summary` · `/manifest` · `/invocations` — content of `scorecard.json`, `run_summary.json`, `run_manifest.json`, `engine_invocations.json`; `404` when the file is absent. These and `/findings` apply the key/position redaction rules **at read time** as well, so bundles written before `1.1` are served with credentials masked
+- `GET /v1/runs/{run_id}/artifacts` — `artifacts_index.json` (`path`, `size_bytes`, `sha256`)
+- `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file, served raw. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: no-store`; HTML and unknown types are `Content-Disposition: attachment`. For bundles older than `1.1` only `scorecard.json`, `artifacts_index.json` and `report.md/html/csv` are served raw; every other file answers `409` (spec, manifest, findings, summaries, sidecars and raw tool logs may hold expanded credentials); use the redacting JSON endpoints above instead, which for such bundles also mask `metadata.env_overrides` dicts and `command` argv by position
+- `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256. `409` for bundles older than `1.1`
 - `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists
 - `POST /v1/waivers`
 - `GET /v1/waivers`

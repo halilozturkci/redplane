@@ -67,6 +67,12 @@ SEVERITY_ORDER = {
 # secret values (`${VAR}` substitutions, credential values) are scrubbed from
 # every file the run writes.
 BUNDLE_FORMAT_VERSION = "1.1"
+# Oldest bundle version whose spec-bearing files may be served raw.
+REDACTED_BUNDLE_MIN_VERSION = "1.1"
+# The only files a pre-1.1 bundle may serve raw: aggregates and rendered reports.
+# Everything else (spec, manifest, findings, summaries, sidecars, raw tool logs)
+# may hold expanded credentials.
+LEGACY_RAW_DOWNLOAD_ALLOWLIST = ("scorecard.json", "artifacts_index.json", "report.md", "report.html", "report.csv")
 
 # Secret values shorter than this are not value-scrubbed (too likely to collide with
 # ordinary words); they are still masked by key/position rules.
