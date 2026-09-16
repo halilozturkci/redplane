@@ -287,7 +287,8 @@ uv run urt waivers revoke --waiver-id <WAIVER_ID>          # expires_at := now; 
 uv run urt report --run-id <RUN_ID> --output-dir ./reports/<RUN_ID>
 uv run urt report --run-id <RUN_ID> --in-place            # refresh report.html (waiver state) inside the run dir
 uv run urt view <RUN_ID> --port 8765                       # loopback viewer for one run directory
-uv run urt serve-api --port 8000                           # JSON API + read-only /ui (loopback only by default)
+uv run urt serve-api --port 8000                           # JSON API + /ui (loopback only by default)
+URT_API_KEY=... uv run urt serve-api --host 0.0.0.0        # non-loopback needs the shared key (bearer + /ui/login) or --unsafe-allow-unauthenticated
 uv run urt gate --run-id <RUN_ID> --threshold high
 uv run urt gate --run-id <RUN_ID> --threshold high --explain   # list blocking + waived findings
 uv run urt gate --run-id <RUN_ID> --threshold high --eval-min-pass-rate 0.8   # also fail below 80% eval pass rate
@@ -1305,12 +1306,21 @@ from the page, since 1.0 never scrubbed argv out of them.
 `scorecard.json` keys:
 - `total_findings`
 - `critical`, `high`, `medium`, `low`, `info`
-- `success_count`, `total_attacks`
-- `asr_overall`
-- `asr_by_category`
+- `success_count`, `total_attacks` — counted over **`attack`-kind findings only** (see `finding_kind` below)
+- `asr_overall`, `asr_by_category` — attack success rate; coverage-gap, execution (launcher crash, failed healthcheck), evaluator and `signal` findings (Power CAT `governance_scan`, PowerPwn `recon_signal`: tenant/governance observations, not attacks) never move it
 - `by_engine`
 - `eval_scores` — map of metric name to average score across all evaluator runs (e.g. `{"answer_relevancy": 0.82, "toxicity": 0.04}`)
 - `eval_pass_rate` — fraction of individual metric scores that passed their threshold (0.0–1.0)
+
+Every finding in `findings.json` also carries `metadata.finding_kind` — one of
+`attack`, `coverage_gap` (engine skipped / launcher missing), `execution` (engine or
+evaluator crashed, target healthcheck failed), `eval` (evaluator metric) or `signal`
+(`governance_scan` / `recon_signal` observations) — written by
+`normalize_findings`; readers derive the same value for older bundles. Engine-specific
+category spellings are folded onto canonical keys before framework mapping
+(`hateunfairness` → `hate_unfairness`, `jailbreak` → `prompt_injection`, `pii` →
+`data_exfiltration`, … see `CATEGORY_ALIASES` in `policy/mapping.py`); when that
+happens the engine's spelling is kept in `metadata.category_reported`.
 
 `report.csv` columns:
 - `finding_id`
@@ -1360,14 +1370,15 @@ Endpoints:
 - `GET /v1/runs/{run_id}/artifacts` — `artifacts_index.json` (`path`, `size_bytes`, `sha256`)
 - `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file, served raw. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: no-store`; HTML and unknown types are `Content-Disposition: attachment`. For bundles older than `1.1` only `scorecard.json`, `artifacts_index.json` and `report.md/html/csv` are served raw; every other file answers `409` (spec, manifest, findings, summaries, sidecars and raw tool logs may hold expanded credentials); use the redacting JSON endpoints above instead, which for such bundles also mask `metadata.env_overrides` dicts, `command` argv and the free-text `error` / `error_message` strings by position
 - `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256. `409` for bundles older than `1.1`
+- `GET /v1/runs/{run_id}/coverage` — framework coverage matrix as JSON: per framework (OWASP LLM Top 10 2025, OWASP Agentic, MITRE ATLAS) the rows are labels × targets with `count`, `max_severity` and the contributing `categories`; an explicit `unmapped` row keeps categories with no mapping visible; `unmapped_categories` lists those no framework maps; `excluded_kinds` says which `finding_kind`s (coverage_gap, execution, eval) are left out; `note` carries the honesty label — mappings are **category-level heuristics** from `policy/mapping.py`, not per-test verdicts
 - `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false[&eval_min_pass_rate=0.8]` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists. `eval_min_pass_rate` (0..1) additionally fails the gate when the scorecard `eval_pass_rate` is below it; a run **without evaluator scores fails** that check (`eval_ok: false`, "eval pass rate unavailable") instead of passing on the scorecard's default `0.0`. `eval_ok` is `null` when no minimum was requested
 - `GET /v1/capabilities` — what a spec may contain, from `constants`: `targets`, `engines`, `evaluators`, `profiles`, `default_profile`, `evidence_levels`, `profile_defaults`, `policy_profiles`, `severity_levels`
 - `GET /v1/templates` · `GET /v1/templates/{name}` — `run_spec*.yaml` files under `URT_TEMPLATES_DIR` (default `./templates`) with `spec_kind` and a `kind` badge that is `smoke` **only** when `metadata.spec_kind: smoke` says so (anything else is `real`), plus `run_profile`, target types, engines, description; the single-template form adds the `yaml` text. Names outside that directory listing are `404`
 - `POST /v1/specs/validate` — body `{"yaml": "..."}` or `{"spec": {...}}`. **Validate-only**: returns `200` with `ok`, `errors[]` (`RunSpec` validation messages, YAML parse errors, and the builder rule that every `targets[*].auth` leaf must be a `${VAR}` reference — literal credentials are rejected), `resolved_spec` (the same key-redacted, value-scrubbed view `urt validate` prints; `null` when invalid), `profile_defaults` for the chosen `run_profile`, `env_vars[]` (`{name, set}` for every `${VAR}` in the payload — a boolean, **never the value**), `spec_kind` / `kind`. Error messages can never carry an expanded value either: the unexpanded payload is validated first (its messages quote `${VAR}` tokens), and any message from the expanded side is scrubbed of every substituted value case-insensitively. YAML anchors/aliases are refused (alias expansion would sidestep the byte cap). `400` for a malformed body, `413` above 256 KiB
 - `POST /v1/specs/probe` — same body; runs the target healthchecks (`urt probe`) and returns `{ok, targets[]}` scrubbed of secret values; `400` when the spec does not validate. Nothing under `/v1/specs` executes a run
-- `GET /v1/runs/{run_a}/diff/{run_b}` — cross-run comparison (`urt diff <a> <b>` prints the same JSON). Findings are matched by `category + sub_category + target_id` (`finding_id` embeds the run id, so it never matches across runs): `new` (only in B), `resolved` (only in A), `persisting`, each group with `count_a/b`, `max_severity_a/b` and the finding ids on both sides; `scorecard_delta` (counts, `asr_overall`, `eval_pass_rate`; `delta` = B − A), `asr_by_category_delta` and `eval_delta` (metric averages; `null` where one side lacks the key). `404` when either run has no findings yet
+- `GET /v1/runs/{run_a}/diff/{run_b}` — cross-run comparison (`urt diff <a> <b>` prints the same JSON). Findings are matched by `canonical category + sub_category + target_id` (`finding_id` embeds the run id, so it never matches across runs; the category goes through `CATEGORY_ALIASES`, so a pre-alias `hateunfairness` and a current `hate_unfairness` are the same issue): `new` (only in B), `resolved` (only in A), `persisting`, each group with `count_a/b`, `max_severity_a/b` and the finding ids on both sides; `scorecard_delta` (counts, `asr_overall`, `eval_pass_rate`; `delta` = B − A), `asr_by_category_delta` (recomputed from both runs' attack-kind findings under canonical category keys, not read from the stored scorecards) and `eval_delta` (metric averages; `null` where one side lacks the key). `404` when either run has no findings yet
 - `GET /v1/targets/{target_id}/trend` — one point per run that included the target, oldest first: severity counts and ASR **computed from that target's findings**, plus `eval_pass_rate_run` (run-level, `null` without evaluators). `404` when no run has findings for the target
-- `GET /v1/runs/{run_id}/waiver-preview?control_id=&target_id=*` — the findings of this run a waiver with these ids would match (`count`, `matches[]` as gate rows). Uses the gate's own `control_matches()` / `target_matches()` server-side (exact match on category, sub_category, finding_id, engine, attack_vector or a framework label, or an `"X "` / `"X:"` prefix of one); expiry is not considered
+- `GET /v1/runs/{run_id}/waiver-preview?control_id=&target_id=*` — the findings of this run a waiver with these ids would match (`count`, `matches[]` as gate rows). Uses the gate's own `control_matches()` / `target_matches()` server-side (exact match on category, sub_category, finding_id, engine, attack_vector or a framework label, an `"X "` / `"X:"` prefix of one, or the same canonical category through `CATEGORY_ALIASES` — a waiver written as `hateunfairness` keeps matching runs normalised to `hate_unfairness`); expiry is not considered
 - `POST /v1/waivers` — `target_id`, `control_id`, `reason`, `owner`, `expires_at` (ISO-8601, `400` otherwise); response carries `active`. A `waiver_id` that already exists answers `409` — waivers are never rewritten
 - `GET /v1/waivers[?target_id=&active=true|false]` — rows with `active`
 - `GET /v1/waivers/{waiver_id}` — row plus `events[]` (`created`, `expiry_changed`, `revoked`; `at`, `expires_at_before`, `expires_at_after`, `note`)
@@ -1397,9 +1408,22 @@ with `allowEval`, `allowScriptTags` and indicator style injection disabled);
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control:
 no-store`. Pre-1.1 bundles are redacted at read time, labelled, and their
 non-allowlisted files are not linked (the API answers `409` for them anyway).
-There is **no authentication**: `serve-api` binds `127.0.0.1` and refuses any
-other `--host` unless `--unsafe-allow-non-loopback` is passed; reach a remote
-machine through an SSH tunnel instead. Waivers are the only mutation the UI offers
+Authentication is one optional **shared secret**, `URT_API_KEY` (no users, roles or
+tenants — that is a stated non-goal). Generate it, do not invent it: `openssl rand -hex 32`;
+keys shorter than 16 characters are refused at startup. When it is set, `/v1/*` requires
+`Authorization: Bearer <key>` (checked with `hmac.compare_digest`) and `/ui/*`
+redirects to `/ui/login`, where the operator types the key once; the browser then
+holds an `HttpOnly; SameSite=Strict` session cookie whose value is
+`<issued_at>.<nonce>.<HMAC(key + per-process secret)>` — never the key, different on
+every login, `Max-Age` 12 h, revoked server-side by "Sign out" (a captured copy stops working at logout), and invalidated for everyone by a server restart. It also
+lets the pages follow `GET` links into `/v1/…` — writes to the JSON API still need the
+bearer header. Every request that offers a *wrong* credential (bad bearer, bad login,
+forged cookie) is answered after a constant 0.5 s delay. `/healthz`, `/ui/static/*` and
+`/ui/login` stay public. Without TLS the key and the cookie cross the network in clear:
+off-loopback, put the server behind an HTTPS reverse proxy. Without a key nothing is gated: `serve-api` binds `127.0.0.1` and
+refuses any other `--host` unless `URT_API_KEY` is set or
+`--unsafe-allow-unauthenticated` (formerly `--unsafe-allow-non-loopback`, still
+accepted) is passed; reach a remote machine through an SSH tunnel instead. Waivers are the only mutation the UI offers
 (create and revoke, never delete). Those form posts are CSRF-protected: a random
 nonce is set as an `HttpOnly; SameSite=Strict` cookie scoped to `/ui`; the form
 embeds that nonce or, once a session cookie exists, `HMAC(session, nonce)` so a

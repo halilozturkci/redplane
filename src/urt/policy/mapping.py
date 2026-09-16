@@ -36,8 +36,44 @@ MITRE_ATLAS_MAP: dict[str, list[str]] = {
 }
 
 
+# Engine-specific spellings → the canonical keys the maps above use (idea 5). PyRIT
+# reports `hateunfairness` / `selfharm`, Promptfoo and DeepTeam talk about
+# `jailbreak`, `pii` and `excessive_agency`; without this table those findings sit
+# in the matrix's "unmapped" row although a mapping exists.
+CATEGORY_ALIASES: dict[str, str] = {
+    "hateunfairness": "hate_unfairness",
+    "hate_fairness": "hate_unfairness",
+    "hate": "hate_unfairness",
+    "selfharm": "self_harm",
+    "jailbreak": "prompt_injection",
+    "promptinjection": "prompt_injection",
+    "indirect_prompt_injection": "prompt_injection",
+    "direct_prompt_injection": "prompt_injection",
+    "sensitive_information_disclosure": "data_exfiltration",
+    "sensitive_data_disclosure": "data_exfiltration",
+    "pii": "data_exfiltration",
+    "pii_leak": "data_exfiltration",
+    "pii_leakage": "data_exfiltration",
+    "privacy": "data_exfiltration",
+    "data_leak": "data_exfiltration",
+    "data_leakage": "data_exfiltration",
+    "exfiltration": "data_exfiltration",
+    "excessive_agency": "tool_abuse",
+    "tool_misuse": "tool_abuse",
+    "insecure_tool_use": "tool_abuse",
+    "harmful_content_violence": "violence",
+    "harmful_content_sexual": "sexual",
+}
+
+
+def canonical_category(category: str) -> str:
+    """Lower-cased, `-`/space → `_`, then alias-resolved. Unknown categories pass through."""
+    key = str(category or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return CATEGORY_ALIASES.get(key, key)
+
+
 def map_category(category: str) -> dict[str, list[str]]:
-    key = category.strip().lower().replace("-", "_")
+    key = canonical_category(category)
     return {
         "owasp_llm": OWASP_LLM_MAP.get(key, []),
         "owasp_agentic": OWASP_AGENTIC_MAP.get(key, []),

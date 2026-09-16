@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Redplane sign in{% endblock %}
+{% block nav %}<nav class="nav"><a class="brand" href="/ui">Redplane</a></nav>{% endblock %}
+{% block content %}
+<h1>Sign in</h1>
+{% if not key_configured %}
+<div class="banner">This server has no <code>URT_API_KEY</code> set, so nothing is gated and there is nothing to sign in to. <a href="/ui">Continue to runs</a>.</div>
+{% else %}
+<p class="note">Enter the server's <code>URT_API_KEY</code>. This is a single <strong>shared secret</strong> for one operator on one machine, not an identity: it grants the same access as the API bearer token. The browser keeps a derived session cookie (<code>HttpOnly; SameSite=Strict</code>), never the key itself.</p>
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+<form method="post" action="/ui/login" class="waiver-form">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label>API key <input type="password" name="api_key" autocomplete="current-password" required autofocus></label>
+  <div class="actions"><button type="submit">Sign in</button></div>
+</form>
+{% endif %}
+{% endblock %}

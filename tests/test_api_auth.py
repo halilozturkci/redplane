@@ -1,0 +1,266 @@
+"""G13: optional shared-secret auth on `urt serve-api` (bearer for the API, cookie for /ui).
+
+One `URT_API_KEY` is the ceiling: no users, no roles. Without a key nothing changes
+and the CLI refuses a non-loopback bind unless `--unsafe-allow-unauthenticated`.
+"""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+from conftest import Bundle
+from fastapi.testclient import TestClient
+
+from urt.api import create_app
+from urt import auth
+from urt.auth import SESSION_COOKIE, issue_session_token, session_is_valid
+
+KEY = "correct-horse-battery-staple"
+
+
+@pytest.fixture(autouse=True)
+def _no_failure_delay(monkeypatch):
+    monkeypatch.setattr(auth, "FAILED_AUTH_DELAY_SECONDS", 0.0)
+
+
+@pytest.fixture
+def client(rich_bundle: Bundle) -> TestClient:
+    return TestClient(create_app(rich_bundle.orchestrator, api_key=KEY))
+
+
+def test_api_requires_bearer_when_key_is_set(client: TestClient, rich_bundle: Bundle):
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/ui/static/app.css").status_code == 200
+    assert client.get("/ui/static/htmx.min.js").status_code == 200
+
+    denied = client.get("/v1/runs")
+    assert denied.status_code == 401
+    assert denied.headers["www-authenticate"].startswith("Bearer")
+    assert client.get("/v1/runs", headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert client.get("/v1/runs", headers={"Authorization": "Basic abc"}).status_code == 401
+    assert client.get(f"/v1/runs/{rich_bundle.run_id}/findings").status_code == 401
+    assert client.post("/v1/waivers", json={}).status_code == 401
+    assert client.get("/openapi.json").status_code == 401
+
+    ok = client.get("/v1/runs", headers={"Authorization": f"Bearer {KEY}"})
+    assert ok.status_code == 200 and ok.json()
+
+
+def test_ui_login_sets_httponly_cookie_and_protects_pages(client: TestClient, rich_bundle: Bundle):
+    redirect = client.get("/ui", follow_redirects=False)
+    assert redirect.status_code == 303
+    assert redirect.headers["location"] == "/ui/login?next=%2Fui"
+    assert client.get(f"/ui/runs/{rich_bundle.run_id}/gate", follow_redirects=False).status_code == 303
+    assert client.get("/ui/login?next=https://evil.example", follow_redirects=False).status_code == 200
+
+    login = client.get("/ui/login")
+    assert login.status_code == 200
+    assert 'type="password"' in login.text
+    assert "shared secret" in login.text
+    token = re.search(r'name="csrf_token" value="([^"]+)"', login.text).group(1)
+
+    wrong = client.post("/ui/login", data={"api_key": "nope", "next": "/ui", "csrf_token": token})
+    assert wrong.status_code == 401
+    assert SESSION_COOKIE not in client.cookies
+    assert client.post("/ui/login", data={"api_key": KEY, "next": "/ui"}).status_code == 403  # CSRF applies here too
+
+    good = client.post("/ui/login", data={"api_key": KEY, "next": "https://evil.example", "csrf_token": token}, follow_redirects=False)
+    assert good.status_code == 303
+    assert good.headers["location"] == "/ui"  # open redirect refused, falls back to /ui
+    set_cookie = good.headers["set-cookie"]
+    assert "HttpOnly" in set_cookie and "SameSite=strict" in set_cookie.replace("Strict", "strict")
+    assert KEY not in set_cookie  # the cookie is a derived token, not the key
+    assert "Max-Age=" in set_cookie
+    assert session_is_valid(client.cookies.get(SESSION_COOKIE), KEY)
+
+    assert client.get("/ui").status_code == 200
+    assert client.get(f"/ui/runs/{rich_bundle.run_id}").status_code == 200
+    # The session cookie also lets the browser follow evidence/JSON links (safe methods only).
+    assert client.get(f"/v1/runs/{rich_bundle.run_id}/scorecard").status_code == 200
+    assert client.post("/v1/waivers", json={"target_id": "t"}).status_code == 401
+    assert client.patch("/v1/waivers/x", json={"revoke": True}).status_code == 401
+
+    # With a session the CSRF token is session-bound; the pre-login token is no longer valid.
+    assert client.post("/ui/logout", data={"csrf_token": token}).status_code == 403
+    bound = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui").text).group(1)
+    assert bound != token
+    logout = client.post("/ui/logout", data={"csrf_token": bound}, headers={"Origin": "http://testserver"}, follow_redirects=False)
+    assert logout.status_code == 303
+    assert client.get("/ui", follow_redirects=False).status_code == 303
+
+
+def test_logout_invalidates_the_session_server_side(client: TestClient, rich_bundle: Bundle):
+    """A captured cookie must stop working at logout, not only at Max-Age or restart."""
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/login").text).group(1)
+    client.post("/ui/login", data={"api_key": KEY, "next": "/ui", "csrf_token": token}, follow_redirects=False)
+    captured = client.cookies.get(SESSION_COOKIE)
+    assert session_is_valid(captured, KEY)
+    assert client.get("/ui", follow_redirects=False).status_code == 200
+
+    bound = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui").text).group(1)
+    assert client.post("/ui/logout", data={"csrf_token": bound}, headers={"Origin": "http://testserver"}, follow_redirects=False).status_code == 303
+
+    # Replay the captured value (as an attacker who copied it would).
+    assert not session_is_valid(captured, KEY)
+    client.cookies.set(SESSION_COOKIE, captured)
+    replay = client.get("/ui", follow_redirects=False)
+    assert replay.status_code == 303
+    assert replay.headers["location"].startswith("/ui/login")
+    assert client.get(f"/v1/runs/{rich_bundle.run_id}/scorecard").status_code == 401
+
+    # A fresh login still works; only the revoked session is dead.
+    client.cookies.delete(SESSION_COOKIE)
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/login").text).group(1)
+    client.post("/ui/login", data={"api_key": KEY, "next": "/ui", "csrf_token": token}, follow_redirects=False)
+    assert client.cookies.get(SESSION_COOKIE) != captured
+    assert client.get("/ui", follow_redirects=False).status_code == 200
+
+
+def test_revoked_session_set_is_bounded(monkeypatch):
+    """The denylist cannot grow without bound: entries older than Max-Age are dropped."""
+    old = issue_session_token(KEY, now=1_000_000)
+    auth.revoke_session(old)
+    assert not session_is_valid(old, KEY, now=1_000_100)
+    fresh = issue_session_token(KEY)
+    auth.revoke_session(fresh, now=1_000_000 + auth.SESSION_MAX_AGE_SECONDS + 10)
+    assert old.split(".")[1] not in auth._REVOKED_NONCES  # pruned: it could not validate anyway
+    assert fresh.split(".")[1] in auth._REVOKED_NONCES
+
+
+def test_forged_session_cookie_is_rejected(client: TestClient):
+    client.cookies.set(SESSION_COOKIE, "0" * 64)
+    assert client.get("/ui", follow_redirects=False).status_code == 303
+    client.cookies.set(SESSION_COOKIE, issue_session_token("wrong-key-but-long-enough"))
+    assert client.get("/v1/runs").status_code == 401
+
+
+def test_session_tokens_rotate_expire_and_die_with_the_process(monkeypatch):
+    """The cookie is HMAC(key + per-process secret, issued-at): two logins differ, a restart
+    invalidates every outstanding cookie, and `max_age` bounds a captured one."""
+    first, second = issue_session_token(KEY), issue_session_token(KEY)
+    assert first != second
+    assert session_is_valid(first, KEY) and session_is_valid(second, KEY)
+    assert not session_is_valid(first, "another-key-of-good-length")
+    assert not session_is_valid(first + "0", KEY)
+    assert not session_is_valid("", KEY)
+
+    old = issue_session_token(KEY, now=1_000_000)
+    assert session_is_valid(old, KEY, now=1_000_000 + auth.SESSION_MAX_AGE_SECONDS - 1)
+    assert not session_is_valid(old, KEY, now=1_000_000 + auth.SESSION_MAX_AGE_SECONDS + 1)
+    assert not session_is_valid(old, KEY, now=999_000)  # issued in the future
+
+    monkeypatch.setattr(auth, "_PROCESS_SECRET", b"restarted-process-secret-value!!")
+    assert not session_is_valid(first, KEY)
+
+
+def test_weak_keys_are_refused_at_startup(rich_bundle: Bundle, monkeypatch, capsys):
+    import sys
+
+    import urt.cli as cli
+
+    with pytest.raises(ValueError, match="at least 16"):
+        create_app(rich_bundle.orchestrator, api_key="short")
+    monkeypatch.setenv("URT_API_KEY", "k")
+    with pytest.raises(ValueError):
+        create_app(rich_bundle.orchestrator)
+
+    calls: list[dict] = []
+    fake_uvicorn = type("U", (), {"run": staticmethod(lambda *a, **kw: calls.append(kw))})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    assert cli.main(["serve-api", "--host", "0.0.0.0"]) == 2
+    err = capsys.readouterr().err
+    assert "at least 16" in err and "openssl rand -hex 32" in err
+    assert calls == []
+
+
+def test_failed_authentication_is_delayed(rich_bundle: Bundle, monkeypatch):
+    import time
+
+    monkeypatch.setattr(auth, "FAILED_AUTH_DELAY_SECONDS", 0.3)
+    client = TestClient(create_app(rich_bundle.orchestrator, api_key=KEY))
+
+    started = time.perf_counter()
+    assert client.get("/v1/runs", headers={"Authorization": "Bearer wrong-wrong-wrong"}).status_code == 401
+    assert time.perf_counter() - started >= 0.3
+
+    started = time.perf_counter()
+    assert client.get("/v1/runs", headers={"Authorization": f"Bearer {KEY}"}).status_code == 200
+    assert time.perf_counter() - started < 0.3
+
+    # Anonymous requests (no credential offered) are not delayed: nothing to brute-force.
+    started = time.perf_counter()
+    assert client.get("/ui", follow_redirects=False).status_code == 303
+    assert time.perf_counter() - started < 0.3
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/login").text).group(1)
+    started = time.perf_counter()
+    assert client.post("/ui/login", data={"api_key": "nope-nope-nope", "csrf_token": token}).status_code == 401
+    assert time.perf_counter() - started >= 0.3
+
+
+def test_without_a_key_nothing_is_gated_and_login_says_so(rich_bundle: Bundle, monkeypatch):
+    monkeypatch.delenv("URT_API_KEY", raising=False)
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    assert client.get("/v1/runs").status_code == 200
+    assert client.get("/ui").status_code == 200
+    login = client.get("/ui/login")
+    assert login.status_code == 200
+    assert "no <code>URT_API_KEY</code>" in login.text
+
+
+def test_create_app_reads_key_from_environment(rich_bundle: Bundle, monkeypatch):
+    monkeypatch.setenv("URT_API_KEY", KEY)
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    assert client.get("/v1/runs").status_code == 401
+    assert client.get("/v1/runs", headers={"Authorization": f"Bearer {KEY}"}).status_code == 200
+
+
+def test_serve_api_non_loopback_needs_key_or_explicit_unsafe_flag(monkeypatch, capsys):
+    import sys
+
+    import urt.cli as cli
+
+    calls: list[dict] = []
+    fake_uvicorn = type("U", (), {"run": staticmethod(lambda *a, **kw: calls.append(kw))})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    monkeypatch.delenv("URT_API_KEY", raising=False)
+
+    assert cli.main(["serve-api", "--host", "0.0.0.0"]) == 2
+    err = capsys.readouterr().err
+    assert "URT_API_KEY" in err and "--unsafe-allow-unauthenticated" in err
+    assert calls == []
+
+    assert cli.main(["serve-api", "--host", "0.0.0.0", "--unsafe-allow-unauthenticated"]) == 0
+    assert calls[-1]["host"] == "0.0.0.0"
+    # The MVP flag name keeps working as an alias.
+    assert cli.main(["serve-api", "--host", "0.0.0.0", "--unsafe-allow-non-loopback"]) == 0
+
+    monkeypatch.setenv("URT_API_KEY", KEY)
+    assert cli.main(["serve-api", "--host", "0.0.0.0"]) == 0
+    assert calls[-1]["host"] == "0.0.0.0"
+    assert cli.main(["serve-api"]) == 0
+    assert calls[-1]["host"] == "127.0.0.1"
+
+
+def test_serve_api_passes_store_paths_to_the_app_factory(monkeypatch):
+    """`urt --artifact-root X --metadata-db Y serve-api` must serve those stores, not the
+    defaults: the uvicorn factory can only see them through the environment."""
+    import os
+    import sys
+
+    import urt.cli as cli
+
+    calls: list[dict] = []
+    fake_uvicorn = type("U", (), {"run": staticmethod(lambda *a, **kw: calls.append(kw))})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    monkeypatch.delenv("URT_ARTIFACT_ROOT", raising=False)
+    monkeypatch.delenv("URT_METADATA_DB", raising=False)
+
+    assert cli.main(["--artifact-root", "/tmp/x/artifacts", "--metadata-db", "/tmp/x/meta.sqlite3", "serve-api"]) == 0
+    assert os.environ["URT_ARTIFACT_ROOT"] == "/tmp/x/artifacts"
+    assert os.environ["URT_METADATA_DB"] == "/tmp/x/meta.sqlite3"
+
+    monkeypatch.setenv("URT_ARTIFACT_ROOT", "/from/env")
+    assert cli.main(["serve-api"]) == 0  # CLI defaults never override an explicit environment
+    assert os.environ["URT_ARTIFACT_ROOT"] == "/from/env"

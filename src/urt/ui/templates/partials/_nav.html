@@ -10,4 +10,7 @@
   <span class="mono muted">{{ run_id }}</span>
   {% endif %}
   <a href="/v1/runs">API</a>
+  {% if session_active is defined and session_active %}
+  <form method="post" action="/ui/logout" class="inline nav-logout"><input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}"><button type="submit">Sign out</button></form>
+  {% endif %}
 </nav>
