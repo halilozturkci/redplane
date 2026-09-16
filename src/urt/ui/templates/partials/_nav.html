@@ -1,0 +1,10 @@
+<nav class="nav">
+  <a class="brand" href="/ui">Redplane</a>
+  <a href="/ui">Runs</a>
+  {% if run_id is defined %}
+  <a href="/ui/runs/{{ run_id }}">Run</a>
+  <a href="/ui/runs/{{ run_id }}/findings">Findings</a>
+  <span class="mono muted">{{ run_id }}</span>
+  {% endif %}
+  <a href="/v1/runs">API</a>
+</nav>

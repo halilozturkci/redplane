@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Redplane findings {{ run_id }}{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Findings: {{ name }}</h1>
+<div class="meta">
+  <span><strong>Run:</strong> <span class="mono">{{ run_id }}</span></span>
+  <span><strong>Status:</strong> {{ status }}</span>
+  <a href="/ui/runs/{{ run_id }}">Run detail</a>
+</div>
+{% if legacy %}
+<div class="banner">Bundle format version {{ version }} predates write-time redaction ({{ redacted_min_version }}); content is redacted at read time and raw files other than aggregates are not served.</div>
+{% endif %}
+{% include "partials/_facets.html" %}
+<div class="explorer">
+  {% include "partials/_findings_table.html" %}
+  <div id="drawer" class="drawer">
+    {% if selected %}
+      {% set view = selected %}
+      {% include "partials/_finding_drawer.html" %}
+    {% else %}
+      <p class="muted">Select a finding to see its description, transcript and evidence.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

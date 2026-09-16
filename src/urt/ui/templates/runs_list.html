@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Redplane runs{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Runs</h1>
+<form class="filters" method="get" action="/ui">
+  <label>Target
+    <select name="target">
+      <option value="">all</option>
+      {% for target in targets %}
+      <option value="{{ target }}"{% if filters.target == target %} selected{% endif %}>{{ target }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Name prefix
+    <input type="text" name="name_prefix" value="{{ filters.name_prefix }}" placeholder="&lt;agent&gt;-&lt;engine&gt;-real-">
+  </label>
+  <label>Gate threshold
+    <select name="gate_threshold">
+      <option value="">profile default</option>
+      {% for level in severity_levels %}
+      <option value="{{ level }}"{% if filters.gate_threshold == level %} selected{% endif %}>{{ level }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Apply</button>
+  <a href="/ui">Reset</a>
+</form>
+{% if rows %}
+<table class="runs-table">
+  <thead>
+    <tr>
+      <th>Name</th><th>Profile</th><th>Status</th><th>Created</th><th class="num">Duration</th>
+      <th>Targets</th><th>Engines (executed / skipped)</th>
+      <th class="num">Critical</th><th class="num">High</th><th class="num">ASR</th><th class="num">Eval pass</th><th>Gate</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    {% set counts = row.get("severity_counts") or {} %}
+    {% set gate = row.get("gate") %}
+    <tr>
+      <td class="name"><a href="/ui/runs/{{ row.run_id }}">{{ row.name }}</a><div class="note mono">{{ row.run_id }}</div></td>
+      <td>{{ row.profile }}</td>
+      <td>
+        <span class="badge {{ 'ok' if row.status == 'completed' else ('skipped' if row.status == 'running' else 'fail') }}">{{ row.status }}</span>
+        {% if row.status == "running" %}<div class="note">last update {{ row.updated_at }}</div>{% endif %}
+      </td>
+      <td class="mono">{{ row.created_at }}</td>
+      <td class="num">{{ row.get("duration_seconds") | seconds }}</td>
+      <td>{{ (row.get("targets") or []) | join(", ") }}</td>
+      <td>{{ (row.get("engines_executed") or []) | join(", ") or "—" }}{% if row.get("engines_skipped") %} <span class="muted">/ skipped: {{ row.get("engines_skipped") | join(", ") }}</span>{% endif %}</td>
+      <td class="num">{{ counts.get("critical") if counts else "—" }}</td>
+      <td class="num">{{ counts.get("high") if counts else "—" }}</td>
+      <td class="num">{{ row.get("asr_overall") | pct }}</td>
+      <td class="num">{{ row.get("eval_pass_rate") | pct if row.get("eval_pass_rate") is not none else "—" }}</td>
+      <td>
+        {% if gate %}
+        <span class="badge {{ 'ok' if gate.ok else 'fail' }}">{{ "pass" if gate.ok else "fail" }}</span>
+        <div class="note">@{{ gate.threshold }} · {{ gate.blocking_count }} blocking · {{ gate.waived_count }} waived</div>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No runs match.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

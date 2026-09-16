@@ -25,6 +25,7 @@ from markupsafe import Markup
 
 from ..constants import LEGACY_RAW_DOWNLOAD_ALLOWLIST, REDACTED_BUNDLE_MIN_VERSION, SEVERITY_ORDER
 from .bundle import RunBundle
+from .filters import FindingFilters
 
 Mode = Literal["static", "served"]
 HrefFor = Callable[[str], str | None]
@@ -216,8 +217,35 @@ def page_context(bundle: RunBundle, *, mode: Mode, href_for: HrefFor) -> dict[st
     }
 
 
+def served_context(
+    bundle: RunBundle,
+    *,
+    threshold: str | None = None,
+    ignore_waivers: bool = False,
+    filters: FindingFilters | None = None,
+    href_for: HrefFor | None = None,
+) -> dict[str, Any]:
+    """Page context for ``/ui`` pages and fragments: one gate verdict at the requested
+    threshold, current facet filters, and download links that respect the legacy rule."""
+    context = page_context(bundle, mode="served", href_for=href_for or api_href(bundle))
+    effective = threshold or bundle.default_threshold
+    context.update(
+        {
+            "gate": bundle.gate(effective, ignore_waivers=ignore_waivers),
+            "gate_threshold": effective,
+            "ignore_waivers": ignore_waivers,
+            "filters": (filters or FindingFilters()).to_dict(),
+            "zip_href": None if bundle.legacy else f"/v1/runs/{bundle.run_id}/artifacts.zip",
+            "report_href": context["href_for"]("report.html"),
+            "api_href": f"/v1/runs/{bundle.run_id}",
+        }
+    )
+    return context
+
+
 def render_run_page(bundle: RunBundle, *, mode: Mode = "static", href_for: HrefFor | None = None) -> str:
-    """Render the single-run viewer. ``static`` is what lands in ``report.html``."""
+    """Render the single-run viewer. ``static`` is what lands in ``report.html``;
+    ``served`` is the ``/ui/runs/{id}`` page at the profile's default threshold."""
     if mode == "static":
         css_text = _asset("app.css")
         js_text = _asset("report.js")
@@ -231,10 +259,9 @@ def render_run_page(bundle: RunBundle, *, mode: Mode = "static", href_for: HrefF
             }
         )
         return _ENV.get_template("run_page.html").render(**context)
-    context = page_context(bundle, mode="served", href_for=href_for or api_href(bundle))
-    return _ENV.get_template("run_detail.html").render(**context)
+    return _ENV.get_template("run_detail.html").render(**served_context(bundle, href_for=href_for))
 
 
-def render_template(name: str, **context: Any) -> str:
+def render_template(template_name: str, /, **context: Any) -> str:
     """Render any template in the set (served pages and HTMX fragments)."""
-    return _ENV.get_template(name).render(**context)
+    return _ENV.get_template(template_name).render(**context)

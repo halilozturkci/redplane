@@ -1,0 +1,30 @@
+<div id="findings-table" class="finding-list">
+  <span class="count" id="finding-count">{{ filtered | length }} of {{ findings | length }} findings</span>
+  {% if filtered %}
+  <table>
+    <thead><tr><th>Severity</th><th>Target</th><th>Engine</th><th>Category</th><th>Description</th><th></th></tr></thead>
+    <tbody>
+    {% for view in filtered %}
+      {% set record = view.record %}
+      {% set detail_href = "/ui/runs/" ~ run_id ~ "/findings?" ~ filters_qs ~ ("&" if filters_qs else "") ~ "finding_id=" ~ (view.finding_id | urlencode) %}
+      <tr class="finding-row" data-finding-id="{{ view.finding_id }}"
+          hx-get="/ui/runs/{{ run_id }}/findings/detail?finding_id={{ view.finding_id | urlencode }}"
+          hx-target="#drawer" hx-swap="innerHTML">
+        <td><span class="badge sev-{{ view.severity }}">{{ view.severity }}</span></td>
+        <td>{{ record.get("target_id", "") }}</td>
+        <td>{{ record.get("engine", "") }}</td>
+        <td>{{ record.get("category", "") }}{% if record.get("sub_category") %}<div class="note">{{ record.get("sub_category") }}</div>{% endif %}</td>
+        <td>{{ record.get("description", "") | truncate(140) }}</td>
+        <td class="tags">
+          {% if view.waived %}<span class="badge waived">waived</span>{% endif %}
+          <span class="badge kind">{{ view.kind }}</span>
+          <a href="{{ detail_href }}" class="note">open</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No findings match these filters.</p>
+  {% endif %}
+</div>

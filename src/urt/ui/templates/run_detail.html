@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Redplane run {{ run_id }}{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+{% include "partials/_run_header.html" %}
+<div class="meta">
+  <a href="/ui/runs/{{ run_id }}/findings">Findings explorer ({{ findings | length }})</a>
+  {% if report_href %}<a href="{{ report_href }}">report.html (download)</a>{% endif %}
+  {% if zip_href %}<a href="{{ zip_href }}">bundle zip</a>{% endif %}
+  <a href="{{ api_href }}">JSON</a>
+</div>
+
+<h2 id="scorecard">Scorecard</h2>
+{% include "partials/_scorecard_tiles.html" %}
+
+<h2 id="gate">Gate</h2>
+{% include "partials/_gate_panel.html" %}
+
+<h2 id="frameworks">Framework coverage</h2>
+{% include "partials/_framework_matrix.html" %}
+
+<h2 id="evaluation">Evaluation Results</h2>
+{% include "partials/_eval_table.html" %}
+
+<h2 id="execution">Execution</h2>
+{% include "partials/_probe_results.html" %}
+{% include "partials/_invocations.html" %}
+{% include "partials/_evaluator_summaries.html" %}
+
+<h2 id="bundle">Audit bundle</h2>
+{% include "partials/_bundle_files.html" %}
+
+<h2 id="spec">Resolved spec (redacted)</h2>
+<details>
+<summary>Show resolved_spec.json</summary>
+<pre>{{ resolved_spec | pretty_json }}</pre>
+</details>
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}
