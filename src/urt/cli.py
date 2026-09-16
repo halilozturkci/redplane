@@ -16,6 +16,7 @@ from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
+from .specs import probe_spec
 from .storage.artifact_store import ArtifactPathError, ArtifactStore
 from .storage.metadata_store import WaiverExistsError
 from .report import (
@@ -321,30 +322,9 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
 
 def cmd_probe(args: argparse.Namespace) -> int:
     spec = load_run_spec(args.spec)
-    from .adapters import create_target_adapter
-
-    rows: list[dict[str, Any]] = []
-    exit_code = 0
-    for target in spec.targets:
-        adapter = create_target_adapter(target)
-        adapter.apply_runtime(
-            connect_seconds=spec.timeouts.connect_seconds,
-            request_seconds=spec.timeouts.request_seconds,
-        )
-        ok, detail = adapter.healthcheck()
-        rows.append(
-            {
-                "target_id": target.target_id,
-                "type": target.target_type,
-                "ok": ok,
-                "detail": detail,
-            }
-        )
-        if not ok:
-            exit_code = 2
-
-    print(json.dumps(Scrubber.from_spec(spec).scrub(rows), indent=2, ensure_ascii=False))
-    return exit_code
+    rows = probe_spec(spec)
+    print(json.dumps(rows, indent=2, ensure_ascii=False))
+    return 0 if all(row["ok"] for row in rows) else 2
 
 
 def cmd_waivers_list(args: argparse.Namespace) -> int:

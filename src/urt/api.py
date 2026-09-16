@@ -29,6 +29,16 @@ from .constants import (
 from .orchestrator import Orchestrator
 from .policy.waivers import waiver_is_active
 from .report import parse_eval_min_pass_rate
+from .specs import (
+    SpecInputError,
+    SpecValidation,
+    capabilities,
+    list_templates,
+    load_template,
+    payload_from_request,
+    probe_spec,
+    validate_spec_payload,
+)
 from .storage.artifact_store import ArtifactPathError
 from .storage.metadata_store import WaiverExistsError, WaiverRevokedError
 from .types import RunSpec, ValidationError
@@ -201,6 +211,55 @@ def create_app(orchestrator: Orchestrator | None = None) -> FastAPI:
         if result is None:
             raise HTTPException(status_code=404, detail="Findings not available for run")
         return result.to_dict()
+
+    # --- spec builder (G4): validate-only and probe; nothing here executes a run ---
+
+    @app.get("/v1/capabilities")
+    def get_capabilities() -> dict[str, Any]:
+        return capabilities()
+
+    @app.get("/v1/templates")
+    def get_templates() -> list[dict[str, Any]]:
+        return list_templates()
+
+    @app.get("/v1/templates/{name}")
+    def get_template(name: str) -> dict[str, Any]:
+        row = load_template(name)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return row
+
+    class _SpecTextError(Exception):
+        """Unparseable spec text: a validation outcome, reported in-band by /validate."""
+
+    def _spec_payload(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return payload_from_request(body)
+        except SpecInputError as exc:
+            status = 413 if "exceeds" in str(exc) else 400
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        except ValidationError as exc:
+            raise _SpecTextError(str(exc)) from exc
+
+    @app.post("/v1/specs/validate")
+    def validate_spec(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            payload = _spec_payload(body)
+        except _SpecTextError as exc:
+            return SpecValidation(ok=False, errors=[str(exc)]).to_dict()
+        return validate_spec_payload(payload).to_dict()
+
+    @app.post("/v1/specs/probe")
+    def probe_spec_endpoint(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            payload = _spec_payload(body)
+        except _SpecTextError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        validation = validate_spec_payload(payload)
+        if not validation.ok or validation.spec is None:
+            raise HTTPException(status_code=400, detail={"errors": validation.errors})
+        rows = probe_spec(validation.spec)
+        return {"ok": all(row["ok"] for row in rows), "targets": rows}
 
     @app.get("/v1/runs/{run_a}/diff/{run_b}")
     def get_diff(run_a: str, run_b: str) -> dict[str, Any]:

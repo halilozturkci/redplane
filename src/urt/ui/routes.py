@@ -8,6 +8,7 @@ page also works without JavaScript (plain GET forms, ``?finding_id=`` drawer).
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from importlib import resources
@@ -22,6 +23,21 @@ from ..diff import comparable, comparable_runs
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
 from ..report import parse_eval_min_pass_rate
+from ..specs import (
+    SpecInputError,
+    SpecValidation,
+    capabilities,
+    form_to_payload,
+    list_templates,
+    load_template,
+    parse_spec_text,
+    payload_to_form,
+    probe_spec,
+    spec_to_yaml,
+    templates_dir,
+    validate_spec_payload,
+)
+from ..types import ValidationError
 from .bundle import FindingView, RunBundle, load_bundle
 from .csrf import CSRF_COOKIE, CSRF_FIELD, csrf_token_for, set_csrf_cookie, verify_csrf
 from .filters import FindingFilters, filter_findings
@@ -195,6 +211,102 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
                 eval_spark=sparkline([p.eval_pass_rate_run for p in points], ymax=1.0),
             )
         )
+
+    # --- spec builder (§4.7): validate-only + probe; no Run button ---
+
+    def specs_page(
+        request: Request,
+        *,
+        form: dict[str, str],
+        yaml_text: str,
+        template_name: str = "",
+        validation: dict[str, Any] | None = None,
+        probe: list[dict[str, Any]] | None = None,
+        error: str | None = None,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        var = form.get("target_auth_var", "").strip()
+        return page(
+            "specs.html",
+            request,
+            status_code=status_code,
+            caps=capabilities(),
+            templates=list_templates(),
+            templates_dir=str(templates_dir()),
+            template_name=template_name,
+            form=form,
+            yaml_text=yaml_text,
+            auth_var_set=(var in os.environ) if var else None,
+            validation=validation,
+            probe=probe,
+            error=error,
+        )
+
+    def _payload_from_yaml(text: str) -> tuple[dict[str, Any] | None, str | None]:
+        try:
+            return parse_spec_text(text), None
+        except SpecInputError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except ValidationError as exc:
+            return None, str(exc)
+
+    @router.get("/specs", response_class=HTMLResponse)
+    def specs_get(request: Request, template: str = Query(default="")) -> HTMLResponse:
+        form = payload_to_form({})
+        yaml_text = ""
+        if template:
+            row = load_template(template)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Template not found")
+            yaml_text = row["yaml"]
+            payload, _ = _payload_from_yaml(yaml_text)
+            form = payload_to_form(payload or {})
+        return specs_page(request, form=form, yaml_text=yaml_text, template_name=template)
+
+    @router.post("/specs/build", response_class=HTMLResponse)
+    async def specs_build(request: Request) -> HTMLResponse:
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        payload = form_to_payload(fields)
+        return specs_page(request, form=payload_to_form(payload), yaml_text=spec_to_yaml(payload))
+
+    @router.post("/specs/load", response_class=HTMLResponse)
+    async def specs_load(request: Request) -> HTMLResponse:
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        yaml_text = fields.get("yaml", "")
+        payload, error = _payload_from_yaml(yaml_text)
+        form = payload_to_form(payload or {})
+        return specs_page(request, form=form, yaml_text=yaml_text, error=error, status_code=400 if error else 200)
+
+    @router.post("/specs/validate", response_class=HTMLResponse)
+    async def specs_validate(request: Request) -> HTMLResponse:
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        yaml_text = fields.get("yaml", "")
+        payload, error = _payload_from_yaml(yaml_text)
+        if payload is None:
+            validation = SpecValidation(ok=False, errors=[error or "unparseable"]).to_dict()
+            form = payload_to_form({})
+        else:
+            validation = validate_spec_payload(payload).to_dict()
+            form = payload_to_form(payload)
+        return specs_page(request, form=form, yaml_text=yaml_text, validation=validation)
+
+    @router.post("/specs/probe", response_class=HTMLResponse)
+    async def specs_probe(request: Request) -> HTMLResponse:
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        yaml_text = fields.get("yaml", "")
+        payload, error = _payload_from_yaml(yaml_text)
+        if payload is None:
+            validation = SpecValidation(ok=False, errors=[error or "unparseable"])
+            form = payload_to_form({})
+        else:
+            validation = validate_spec_payload(payload)
+            form = payload_to_form(payload)
+        probe = probe_spec(validation.spec) if validation.ok and validation.spec is not None else None
+        return specs_page(request, form=form, yaml_text=yaml_text, validation=validation.to_dict(), probe=probe)
 
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 
