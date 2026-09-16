@@ -152,6 +152,9 @@ class RunSpec:
     evidence_level: str = "standard"
     seed: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Values substituted for `${VAR}` by `load_run_spec`. Never serialized; used only
+    # to scrub everything the run writes or prints.
+    secret_values: frozenset[str] = field(default_factory=frozenset, repr=False, compare=False)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "RunSpec":
@@ -214,7 +217,9 @@ class RunSpec:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("secret_values", None)
+        return data
 
 
 @dataclass(slots=True)

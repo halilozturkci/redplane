@@ -63,6 +63,15 @@ SEVERITY_ORDER = {
     "critical": 4,
 }
 
+# 1.0: initial bundle. 1.1: target auth and sensitive keys are redacted and known
+# secret values (`${VAR}` substitutions, credential values) are scrubbed from
+# every file the run writes.
+BUNDLE_FORMAT_VERSION = "1.1"
+
+# Secret values shorter than this are not value-scrubbed (too likely to collide with
+# ordinary words); they are still masked by key/position rules.
+MIN_SECRET_LENGTH = 8
+
 AUDIT_BUNDLE_FILES = (
     "resolved_spec.json",
     "run_manifest.json",

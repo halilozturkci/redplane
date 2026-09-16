@@ -14,9 +14,11 @@ from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
 from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
+from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
 from .report import evaluate_gate, load_findings, render_csv, render_html, render_markdown
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
+from .gateway.redaction import redact_payload
 
 
 def _template_payload() -> dict[str, Any]:
@@ -145,7 +147,8 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     spec = load_run_spec(args.spec)
-    print(json.dumps(spec.to_dict(), indent=2, ensure_ascii=False))
+    printable = Scrubber.from_spec(spec).scrub(redact_run_spec_payload(spec.to_dict()))
+    print(json.dumps(printable, indent=2, ensure_ascii=False))
     print("Validation OK")
     return 0
 
@@ -267,7 +270,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
         if not ok:
             exit_code = 2
 
-    print(json.dumps(rows, indent=2, ensure_ascii=False))
+    print(json.dumps(Scrubber.from_spec(spec).scrub(rows), indent=2, ensure_ascii=False))
     return exit_code
 
 
@@ -322,7 +325,12 @@ def cmd_serve_gateway(args: argparse.Namespace) -> int:
         config.gateway.port = int(args.port)
 
     if args.print_effective_config:
-        print(json.dumps(config.to_dict(), indent=2, ensure_ascii=False))
+        printable = config.to_dict()
+        # Same rule as run specs: every auth leaf is a credential, whatever its key.
+        printable["targets"] = {
+            target_id: redact_target_payload(target) for target_id, target in printable.get("targets", {}).items()
+        }
+        print(json.dumps(redact_payload(printable), indent=2, ensure_ascii=False))
 
     serve_gateway(config)
     return 0

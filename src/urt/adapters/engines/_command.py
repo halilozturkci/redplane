@@ -128,7 +128,8 @@ class CommandEngineAdapter(EngineAdapter):
         if parse_payload is not None:
             details["parse_payload"] = parse_payload
         if env_overrides:
-            details["env_overrides"] = dict(env_overrides)
+            # Keys only: values come from params.env and are frequently credentials.
+            details["env_override_keys"] = sorted(env_overrides)
         if cwd is not None:
             details["cwd"] = str(cwd)
 

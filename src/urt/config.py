@@ -4,19 +4,34 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
+from .constants import MIN_SECRET_LENGTH
 from .types import RunSpec, ValidationError
 
+_ENV_TOKEN = re.compile(r"\$\{([^}]+)\}|\$(\w+)")
 
-def expand_env_vars(obj: Any) -> Any:
-    """Recursively expand `${VAR}` tokens in nested YAML/JSON payloads."""
+
+def expand_env_vars(obj: Any, *, collected: set[str] | None = None) -> Any:
+    """Recursively expand `${VAR}` tokens in nested YAML/JSON payloads.
+
+    When `collected` is given, every substituted environment value of useful
+    length is added to it; `${VAR}` is the secrets contract, so those values are
+    what the run must later scrub from everything it writes.
+    """
     if isinstance(obj, dict):
-        return {str(key): expand_env_vars(value) for key, value in obj.items()}
+        return {str(key): expand_env_vars(value, collected=collected) for key, value in obj.items()}
     if isinstance(obj, list):
-        return [expand_env_vars(value) for value in obj]
+        return [expand_env_vars(value, collected=collected) for value in obj]
     if isinstance(obj, str):
+        if collected is not None:
+            for match in _ENV_TOKEN.finditer(obj):
+                name = match.group(1) or match.group(2)
+                value = os.environ.get(name)
+                if value is not None and len(value) >= MIN_SECRET_LENGTH:
+                    collected.add(value)
         return os.path.expandvars(obj)
     return obj
 
@@ -46,7 +61,10 @@ def load_run_spec(path: str | Path) -> RunSpec:
     else:
         raise ValidationError("Unsupported run spec format. Use .yaml, .yml, or .json")
 
-    return RunSpec.from_dict(expand_env_vars(payload))
+    substituted: set[str] = set()
+    spec = RunSpec.from_dict(expand_env_vars(payload, collected=substituted))
+    spec.secret_values = frozenset(substituted)
+    return spec
 
 
 def dump_run_spec(path: str | Path, payload: dict[str, Any]) -> None:

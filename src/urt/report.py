@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import json
 from io import StringIO
 from pathlib import Path
@@ -94,19 +95,31 @@ def render_markdown(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -
     return "\n".join(lines)
 
 
+def _esc(value: Any) -> str:
+    """Escape attacker-influenced text (finding fields, model output) for HTML."""
+    return html.escape(str(value), quote=True)
+
+
 def render_html(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -> str:
     sorted_findings = sort_findings(findings)
     rows: list[str] = []
     for item in sorted_findings:
         rows.append(
             "<tr>"
-            f"<td>{item.get('severity', '')}</td>"
-            f"<td>{item.get('target_id', '')}</td>"
-            f"<td>{item.get('engine', '')}</td>"
-            f"<td>{item.get('category', '')}</td>"
-            f"<td>{item.get('description', '')}</td>"
+            f"<td>{_esc(item.get('severity', ''))}</td>"
+            f"<td>{_esc(item.get('target_id', ''))}</td>"
+            f"<td>{_esc(item.get('engine', ''))}</td>"
+            f"<td>{_esc(item.get('category', ''))}</td>"
+            f"<td>{_esc(item.get('description', ''))}</td>"
             "</tr>"
         )
+
+    run_id = _esc(scorecard.get("run_id", "unknown"))
+    total_findings = _esc(scorecard.get("total_findings", 0))
+    asr_overall = f"{float(scorecard.get('asr_overall', 0.0)):.2%}"
+    severity_counts = "/".join(
+        _esc(scorecard.get(level, 0)) for level in ("critical", "high", "medium", "low", "info")
+    )
 
     # Build eval results HTML section
     eval_scores = scorecard.get("eval_scores", {})
@@ -114,12 +127,12 @@ def render_html(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -> st
     eval_html = ""
     if eval_scores:
         eval_rows = "".join(
-            f"<tr><td>{metric}</td><td>{avg:.4f}</td></tr>"
+            f"<tr><td>{_esc(metric)}</td><td>{float(avg):.4f}</td></tr>"
             for metric, avg in sorted(eval_scores.items())
         )
         eval_html = f"""
   <h2>Evaluation Results</h2>
-  <div class="meta"><strong>Overall Pass Rate:</strong> {eval_pass_rate:.2%}</div>
+  <div class="meta"><strong>Overall Pass Rate:</strong> {float(eval_pass_rate):.2%}</div>
   <table>
     <thead><tr><th>Metric</th><th>Avg Score</th></tr></thead>
     <tbody>{eval_rows}</tbody>
@@ -129,7 +142,8 @@ def render_html(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -> st
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>URT Report {scorecard.get('run_id', 'unknown')}</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
+  <title>URT Report {run_id}</title>
   <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; }}
     h1, h2 {{ margin: 0 0 12px 0; }}
@@ -142,10 +156,10 @@ def render_html(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -> st
 <body>
   <h1>URT Report</h1>
   <div class="meta">
-    <div><strong>Run ID:</strong> {scorecard.get('run_id', 'unknown')}</div>
-    <div><strong>Total Findings:</strong> {scorecard.get('total_findings', 0)}</div>
-    <div><strong>ASR Overall:</strong> {scorecard.get('asr_overall', 0.0):.2%}</div>
-    <div><strong>Critical/High/Medium/Low/Info:</strong> {scorecard.get('critical', 0)}/{scorecard.get('high', 0)}/{scorecard.get('medium', 0)}/{scorecard.get('low', 0)}/{scorecard.get('info', 0)}</div>
+    <div><strong>Run ID:</strong> {run_id}</div>
+    <div><strong>Total Findings:</strong> {total_findings}</div>
+    <div><strong>ASR Overall:</strong> {asr_overall}</div>
+    <div><strong>Critical/High/Medium/Low/Info:</strong> {severity_counts}</div>
   </div>
   <h2>Findings</h2>
   <table>
