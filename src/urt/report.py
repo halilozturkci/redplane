@@ -142,6 +142,7 @@ def render_html(scorecard: dict[str, Any], findings: list[dict[str, Any]]) -> st
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
   <title>URT Report {run_id}</title>
   <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; }}

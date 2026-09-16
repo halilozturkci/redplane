@@ -22,7 +22,7 @@ from .constants import (
     DEFAULT_METADATA_DB,
 )
 from .normalization import build_scorecard, normalize_findings
-from .redaction import redact_run_spec_payload
+from .redaction import Scrubber, redact_run_spec_payload
 from .report import render_csv, render_html, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
@@ -63,9 +63,13 @@ class Orchestrator:
             updated_at=now,
         )
         self.metadata_store.create_run(run_record)
-        # The in-memory spec holds expanded `${VAR}` credentials; the bundle must not.
-        redacted_spec = redact_run_spec_payload(spec.to_dict())
-        self.artifact_store.write_json(run_id, "resolved_spec.json", redacted_spec)
+        # The in-memory spec holds expanded `${VAR}` credentials; nothing this run
+        # writes or returns may. `store` scrubs known secret values from every write
+        # (including adapter raw logs); the spec copy is additionally key-redacted.
+        scrubber = Scrubber.from_spec(spec)
+        store = self.artifact_store.scrubbed(scrubber)
+        redacted_spec = scrubber.scrub(redact_run_spec_payload(spec.to_dict()))
+        store.write_json(run_id, "resolved_spec.json", redacted_spec)
 
         run_started = perf_counter()
         all_findings: list[UnifiedFinding] = []
@@ -125,7 +129,7 @@ class Orchestrator:
                             run_name=spec.name,
                             run_profile=spec.run_profile,
                             target=target_spec,
-                            artifact_store=self.artifact_store,
+                            artifact_store=store,
                             timeout_seconds=spec.timeouts.engine_seconds,
                             seed=spec.seed,
                             evidence_level=spec.evidence_level,
@@ -182,6 +186,7 @@ class Orchestrator:
                         )
                         evaluator_adapter = create_evaluator_adapter(evaluator_spec)
                         sidecar_path = self._write_engine_findings_sidecar(
+                            store,
                             run_id=run_id,
                             evaluator_name=evaluator_spec.name,
                             target_id=target_spec.target_id,
@@ -192,7 +197,7 @@ class Orchestrator:
                             run_id=run_id,
                             run_name=spec.name,
                             target=target_spec,
-                            artifact_store=self.artifact_store,
+                            artifact_store=store,
                             timeout_seconds=spec.timeouts.engine_seconds,
                             seed=spec.seed,
                             engine_findings=target_findings,
@@ -226,19 +231,20 @@ class Orchestrator:
                     target_adapter.end_session(session_id)
 
             normalized = normalize_findings(all_findings, policy_profiles=spec.policy_profiles)
+            normalized = [scrubber.scrub_finding(item) for item in normalized]
             scorecard = build_scorecard(run_id, normalized, eval_results=all_eval_results or None)
 
-            findings_path = self.artifact_store.write_json(
+            findings_path = store.write_json(
                 run_id,
                 "findings.json",
                 [f.to_dict() for f in normalized],
             )
-            scorecard_path = self.artifact_store.write_json(
+            scorecard_path = store.write_json(
                 run_id,
                 "scorecard.json",
                 scorecard.to_dict(),
             )
-            run_summary_path = self.artifact_store.write_json(
+            run_summary_path = store.write_json(
                 run_id,
                 "run_summary.json",
                 {
@@ -252,14 +258,14 @@ class Orchestrator:
                     "evaluator_summaries": evaluator_summaries,
                 },
             )
-            self.artifact_store.write_json(run_id, "engine_invocations.json", engine_invocations)
+            store.write_json(run_id, "engine_invocations.json", engine_invocations)
 
             markdown = render_markdown(scorecard.to_dict(), [f.to_dict() for f in normalized])
             html = render_html(scorecard.to_dict(), [f.to_dict() for f in normalized])
             csv_text = render_csv([f.to_dict() for f in normalized])
-            report_md_path = self.artifact_store.write_text(run_id, "report.md", markdown)
-            report_html_path = self.artifact_store.write_text(run_id, "report.html", html)
-            report_csv_path = self.artifact_store.write_text(run_id, "report.csv", csv_text)
+            report_md_path = store.write_text(run_id, "report.md", markdown)
+            report_html_path = store.write_text(run_id, "report.html", html)
+            report_csv_path = store.write_text(run_id, "report.csv", csv_text)
 
             run_duration = perf_counter() - run_started
             run_manifest = {
@@ -285,13 +291,13 @@ class Orchestrator:
                     "csv": report_csv_path,
                 },
             }
-            self.artifact_store.write_json(run_id, "run_manifest.json", run_manifest)
+            store.write_json(run_id, "run_manifest.json", run_manifest)
 
-            run_root = self.artifact_store.run_dir(run_id)
+            run_root = store.run_dir(run_id)
             artifacts_index = build_artifacts_index(run_root)
-            artifacts_index_path = self.artifact_store.write_json(run_id, "artifacts_index.json", artifacts_index)
+            artifacts_index_path = store.write_json(run_id, "artifacts_index.json", artifacts_index)
             artifacts_index = build_artifacts_index(run_root)
-            artifacts_index_path = self.artifact_store.write_json(run_id, "artifacts_index.json", artifacts_index)
+            artifacts_index_path = store.write_json(run_id, "artifacts_index.json", artifacts_index)
 
             self.metadata_store.insert_findings(normalized)
             self.metadata_store.update_run(
@@ -302,7 +308,7 @@ class Orchestrator:
                 findings_path=findings_path,
             )
 
-            return {
+            return scrubber.scrub({
                 "run_id": run_id,
                 "status": "completed",
                 "scorecard": scorecard.to_dict(),
@@ -312,18 +318,19 @@ class Orchestrator:
                 "manifest_path": str(run_root / "run_manifest.json"),
                 "artifacts_index_path": artifacts_index_path,
                 "engine_summaries": engine_summaries,
-            }
+            })
 
         except Exception as exc:  # noqa: BLE001
             error_trace = traceback.format_exc()
-            error_path = self.artifact_store.write_text(run_id, "run_error.log", error_trace)
+            error_path = store.write_text(run_id, "run_error.log", error_trace)
+            error_message = scrubber.scrub_text(str(exc))
             self.metadata_store.update_run(
                 run_id,
                 status="failed",
                 updated_at=self._utc_now(),
-                error_message=str(exc),
+                error_message=error_message,
             )
-            self.artifact_store.write_json(
+            store.write_json(
                 run_id,
                 "run_manifest.json",
                 {
@@ -334,7 +341,7 @@ class Orchestrator:
                     "created_at": now,
                     "failed_at": self._utc_now(),
                     "bundle_format_version": BUNDLE_FORMAT_VERSION,
-                    "error": str(exc),
+                    "error": error_message,
                     "target_probe_results": target_probe_results,
                     "engine_invocations": engine_invocations,
                     "budget": budget.snapshot(),
@@ -343,12 +350,13 @@ class Orchestrator:
             return {
                 "run_id": run_id,
                 "status": "failed",
-                "error": str(exc),
+                "error": error_message,
                 "error_log_path": error_path,
             }
 
     def _write_engine_findings_sidecar(
         self,
+        store: ArtifactStore,
         *,
         run_id: str,
         evaluator_name: str,
@@ -372,7 +380,7 @@ class Orchestrator:
                 for item in engine_results
             ],
         }
-        return self.artifact_store.write_json(
+        return store.write_json(
             run_id,
             f"raw/{evaluator_name}/{target_id}_engine_findings.json",
             payload,
