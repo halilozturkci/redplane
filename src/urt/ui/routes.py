@@ -296,7 +296,7 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
                 eval_spark=sparkline([p.eval_pass_rate_run for p in points], ymax=1.0),
         )
 
-    # --- spec builder (§4.7): validate-only + probe; no Run button ---
+    # --- spec builder (§4.7): validate, probe, and queue an async run ---
 
     def specs_page(
         request: Request,
@@ -391,6 +391,29 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             form = payload_to_form(payload)
         probe = probe_spec(validation.spec) if validation.ok and validation.spec is not None else None
         return specs_page(request, form=form, yaml_text=yaml_text, validation=validation.to_dict(), probe=probe)
+
+    @router.post("/specs/run", response_class=HTMLResponse)
+    async def specs_run(request: Request) -> Response:
+        """Queue the YAML as an async run (§4.7). Same validation as the Validate button:
+        `${VAR}`-only auth, so the browser never posts an expanded credential; the spec
+        is expanded server-side and handed to the worker. Redirects to the run page."""
+        fields = await read_form(request)
+        verify_csrf(request, fields.get(CSRF_FIELD))
+        yaml_text = fields.get("yaml", "")
+        payload, error = _payload_from_yaml(yaml_text)
+        if payload is None:
+            validation = SpecValidation(ok=False, errors=[error or "unparseable"])
+            return specs_page(request, form=payload_to_form({}), yaml_text=yaml_text, validation=validation.to_dict(), status_code=400)
+        validation = validate_spec_payload(payload)
+        if not validation.ok or validation.spec is None:
+            return specs_page(
+                request, form=payload_to_form(payload), yaml_text=yaml_text, validation=validation.to_dict(), status_code=400
+            )
+        run_id = app.state.run_worker.submit(validation.spec)
+        target = f"/ui/runs/{quote(run_id, safe='')}"
+        if request.headers.get("hx-request") == "true":
+            return Response(status_code=200, headers={**PAGE_HEADERS, "HX-Redirect": target})
+        return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
 
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 

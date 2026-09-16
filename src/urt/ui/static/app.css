@@ -147,3 +147,4 @@ form.inline { display: inline; margin: 0; }
 .waiver-form .actions { display: flex; gap: 10px; align-items: center; }
 .preview { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; margin-top: 12px; max-width: 760px; }
 .preview ul { margin: 4px 0; padding-left: 18px; }
+.yaml-form button.run { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 4px; padding: 4px 10px; font-weight: 600; }
