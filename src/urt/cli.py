@@ -15,10 +15,12 @@ from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
-from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
+from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
 from .gateway.redaction import redact_payload
+from .ui import load_bundle
+from .ui.render import render_run_page
 
 
 def _template_payload() -> dict[str, Any]:
@@ -173,11 +175,21 @@ def cmd_report(args: argparse.Namespace) -> int:
     if not scorecard_path or not findings_path:
         print("Run does not contain scorecard/findings paths yet", file=sys.stderr)
         return 1
+    run_dir = orchestrator.artifact_store.existing_run_dir(args.run_id)
+    if run_dir is None:
+        print(f"Run directory not found for {args.run_id}", file=sys.stderr)
+        return 1
+
+    if args.in_place:
+        orchestrator.write_reports(args.run_id)
+        print(f"Report bundle refreshed in {run_dir}")
+        return 0
 
     scorecard = json.loads(Path(scorecard_path).read_text(encoding="utf-8"))
     findings = json.loads(Path(findings_path).read_text(encoding="utf-8"))
     markdown = render_markdown(scorecard, findings)
-    html = render_html(scorecard, findings)
+    # The viewer embeds the redacted bundle and the waivers stored right now.
+    html = render_run_page(load_bundle(run_dir, waivers=orchestrator.list_waivers()), mode="static")
     csv_text = render_csv(findings)
 
     if args.output_dir:
@@ -190,6 +202,11 @@ def cmd_report(args: argparse.Namespace) -> int:
         html_path.write_text(html, encoding="utf-8")
         csv_path.write_text(csv_text, encoding="utf-8")
         print(f"Report bundle written to {output_dir}")
+        if output_dir.resolve() != run_dir.resolve():
+            print(
+                "Note: evidence and file links in report.html are relative to the run directory "
+                f"({run_dir}); copy the report there, use --in-place, or open it with `urt view`."
+            )
         return 0
 
     if args.format == "md":
@@ -385,6 +402,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--output", help="Output report file")
     p_report.add_argument("--format", default="md", choices=["md", "html", "csv"])
     p_report.add_argument("--output-dir", help="Write report bundle (md/html/csv) into directory")
+    p_report.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Re-render report.md/html/csv inside the run directory and rebuild artifacts_index.json "
+        "(refreshes the waiver state embedded in report.html)",
+    )
     p_report.set_defaults(func=cmd_report)
 
     p_gate = sub.add_parser("gate", help="Evaluate run against severity threshold")

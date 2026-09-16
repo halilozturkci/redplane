@@ -23,7 +23,8 @@ dependencies = [
   "pyrit>=1.1,<2",
   "python-dotenv>=1.0.0",
   "msal>=1.20.0",
-  "msal-extensions>=1.0.0"
+  "msal-extensions>=1.0.0",
+  "jinja2>=3.1.0"
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+urt = ["ui/templates/*.html", "ui/templates/partials/*.html", "ui/static/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

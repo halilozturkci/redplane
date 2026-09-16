@@ -18,6 +18,9 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from .constants import (
+    ARTIFACT_ATTACHMENT_MEDIA_TYPES,
+    ARTIFACT_INLINE_MEDIA_TYPES,
+    ARTIFACT_RESPONSE_HEADERS,
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_METADATA_DB,
     LEGACY_RAW_DOWNLOAD_ALLOWLIST,
@@ -36,30 +39,10 @@ BUNDLE_JSON_ENDPOINTS = {
     "invocations": "engine_invocations.json",
 }
 
-# Served inline. Everything else is an attachment with a generic type so the
-# browser never renders attacker-influenced tool output in the API origin.
-INLINE_MEDIA_TYPES = {
-    ".json": "application/json",
-    ".jsonl": "application/x-ndjson",
-    ".md": "text/markdown; charset=utf-8",
-    ".txt": "text/plain; charset=utf-8",
-    ".log": "text/plain; charset=utf-8",
-    ".csv": "text/csv; charset=utf-8",
-    ".yaml": "text/plain; charset=utf-8",
-    ".yml": "text/plain; charset=utf-8",
-}
-ATTACHMENT_MEDIA_TYPES = {
-    ".html": "text/html; charset=utf-8",
-}
-
-
-_ARTIFACT_HEADERS = {
-    "X-Content-Type-Options": "nosniff",
-    # Artifacts are attacker-influenced tool output; never let them script or be
-    # cached if a UI is ever served from this origin.
-    "Content-Security-Policy": "default-src 'none'; sandbox",
-    "Cache-Control": "no-store",
-}
+# Kept as module names for existing importers; the policy lives in `constants`.
+INLINE_MEDIA_TYPES = ARTIFACT_INLINE_MEDIA_TYPES
+ATTACHMENT_MEDIA_TYPES = ARTIFACT_ATTACHMENT_MEDIA_TYPES
+_ARTIFACT_HEADERS = ARTIFACT_RESPONSE_HEADERS
 
 
 def _artifact_response(path: Path, relative_path: str) -> FileResponse:

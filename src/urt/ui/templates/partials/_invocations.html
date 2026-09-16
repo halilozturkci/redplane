@@ -1,0 +1,21 @@
+<h3>Engine invocations</h3>
+{% if invocations %}
+<table class="invocations">
+  <thead><tr><th>Engine</th><th>Target</th><th>Status</th><th>Started</th><th class="num">Duration</th><th>fail_open</th><th>Message</th></tr></thead>
+  <tbody>
+  {% for row in invocations %}
+    <tr>
+      <td>{{ row.get("engine", "") }}</td>
+      <td>{{ row.get("target_id", "") }}</td>
+      <td><span class="badge {{ 'ok' if row.get('status') == 'completed' else ('skipped' if row.get('status') == 'skipped' else 'fail') }}">{{ row.get("status", "") }}</span></td>
+      <td class="mono">{{ row.get("started_at", "") }}</td>
+      <td class="num">{{ row.get("duration_seconds") | seconds }}</td>
+      <td>{{ "yes" if row.get("fail_open") else "no" }}</td>
+      <td>{{ row.get("message", "") }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No engine invocations recorded{% if status == "failed" %} before the run failed{% endif %}.</p>
+{% endif %}

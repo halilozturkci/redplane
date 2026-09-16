@@ -1,0 +1,77 @@
+{% set record = view.record %}
+<dl>
+  <dt>Finding</dt><dd class="mono">{{ view.finding_id }}</dd>
+  <dt>Severity</dt><dd><span class="badge sev-{{ view.severity }}">{{ view.severity }}</span> confidence {{ record.get("confidence") | num(2) }}</dd>
+  <dt>Kind</dt><dd>{{ view.kind }}</dd>
+  <dt>Target</dt><dd>{{ record.get("target_id", "") }}</dd>
+  <dt>Engine</dt><dd>{{ record.get("engine", "") }}</dd>
+  <dt>Category</dt><dd>{{ record.get("category", "") }}{% if record.get("sub_category") %} / {{ record.get("sub_category") }}{% endif %}</dd>
+  <dt>Attack vector</dt><dd>{{ record.get("attack_vector", "") }}</dd>
+  <dt>Attack complexity</dt><dd>{{ record.get("attack_complexity", "") }}</dd>
+  <dt>Success</dt><dd>{{ "yes" if record.get("success") else "no" }}</dd>
+</dl>
+<h4>Description</h4>
+<p>{{ record.get("description", "") }}</p>
+{% if view.waiver %}
+<div class="waiver-box">
+  <strong>Waived</strong> by <span class="mono">{{ view.waiver.waiver_id }}</span>
+  · control <span class="mono">{{ view.waiver.control_id }}</span>
+  · owner {{ view.waiver.owner }}
+  · expires {{ view.waiver.expires_at }}
+  <div class="note">{{ view.waiver.reason }}</div>
+</div>
+{% endif %}
+{% if view.mapping_chips %}
+<h4>Framework mappings</h4>
+<div class="chips">
+{% for framework, label in view.mapping_chips %}
+  <span class="chip"><span class="fw">{{ framework }}</span> {{ label }}</span>
+{% endfor %}
+</div>
+{% endif %}
+{% if record.get("repro_steps") %}
+<h4>Repro steps</h4>
+<ol>
+{% for step in record.get("repro_steps") %}
+  <li>{{ step }}</li>
+{% endfor %}
+</ol>
+{% endif %}
+<h4>Evidence</h4>
+{% if view.evidence %}
+<ul>
+{% for link in view.evidence %}
+  {% set href = href_for(link.relative_path) if link.relative_path else None %}
+  <li>
+  {% if href %}
+    <a href="{{ href }}" class="mono">{{ link.relative_path }}</a>
+  {% elif link.relative_path %}
+    <span class="mono">{{ link.relative_path }}</span> <span class="note">(not served for pre-{{ redacted_min_version }} bundles)</span>
+  {% else %}
+    <span class="mono">{{ link.label }}</span> <span class="note">(outside the bundle)</span>
+  {% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="muted">No evidence files recorded for this finding.</p>
+{% endif %}
+<h4>Transcript{% if view.transcript_source %} <span class="muted">({{ view.transcript_source }})</span>{% endif %}</h4>
+{% if view.transcript %}
+<div class="transcript">
+{% for turn in view.transcript %}
+  <div class="turn role-{{ turn.role | lower }}"><span class="role">{{ turn.role }}</span><pre>{{ turn.content }}</pre></div>
+{% endfor %}
+</div>
+{% else %}
+<p class="muted">No prompt/response transcript in this finding's metadata; see the raw metadata below.</p>
+{% endif %}
+<details>
+  <summary>Raw metadata (JSON)</summary>
+  <pre class="raw">{{ view.metadata_json }}</pre>
+  {% if view.metadata_truncated %}
+  {% set findings_href = href_for("findings.json") %}
+  <p class="note">Raw metadata truncated at {{ view.metadata_json | length }} characters.
+  {% if findings_href %}Full record in <a href="{{ findings_href }}">findings.json</a>.{% else %}Full record in <code>findings.json</code>.{% endif %}</p>
+  {% endif %}
+</details>

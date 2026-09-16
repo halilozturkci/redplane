@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Redplane report {{ run_id }}{% endblock %}
+{% block content %}
+{% include "partials/_run_header.html" %}
+
+<h2 id="scorecard">Scorecard</h2>
+{% include "partials/_scorecard_tiles.html" %}
+
+<h2 id="gate">Gate</h2>
+{% include "partials/_gate_panel.html" %}
+
+<h2 id="findings">Findings</h2>
+{% include "partials/_facets.html" %}
+<div class="finding-list">
+{% for view in findings %}
+{% include "partials/_finding.html" %}
+{% else %}
+<p class="muted">No findings recorded.</p>
+{% endfor %}
+</div>
+
+<h2 id="frameworks">Framework coverage</h2>
+{% include "partials/_framework_matrix.html" %}
+
+<h2 id="evaluation">Evaluation Results</h2>
+{% include "partials/_eval_table.html" %}
+
+<h2 id="execution">Execution</h2>
+{% include "partials/_probe_results.html" %}
+{% include "partials/_invocations.html" %}
+{% include "partials/_evaluator_summaries.html" %}
+
+<h2 id="bundle">Audit bundle</h2>
+{% include "partials/_bundle_files.html" %}
+
+<h2 id="spec">Resolved spec (redacted)</h2>
+<details>
+<summary>Show resolved_spec.json</summary>
+<pre>{{ resolved_spec | pretty_json }}</pre>
+</details>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="redplane-data">{{ embedded_data | json_script }}</script>
+<script>{{ js_text }}</script>
+{% endblock %}

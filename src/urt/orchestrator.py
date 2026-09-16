@@ -27,10 +27,12 @@ from .constants import (
 )
 from .normalization import build_scorecard, normalize_findings
 from .redaction import Scrubber, redact_bundle_payload, redact_run_spec_payload
-from .report import GateResult, gate_result, load_findings, render_csv, render_html, render_markdown
+from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
 from .runtime import BudgetTracker
 from .storage import ArtifactStore, MetadataStore
 from .types import EngineRunResult, EvalRunResult, RunRecord, RunSpec, UnifiedFinding
+from .ui import load_bundle
+from .ui.render import render_run_page
 
 
 def _parse_version(value: str | None) -> tuple[int, ...]:
@@ -275,13 +277,9 @@ class Orchestrator:
             )
             store.write_json(run_id, "engine_invocations.json", engine_invocations)
 
-            markdown = render_markdown(scorecard.to_dict(), [f.to_dict() for f in normalized])
-            html = render_html(scorecard.to_dict(), [f.to_dict() for f in normalized])
-            csv_text = render_csv([f.to_dict() for f in normalized])
-            report_md_path = store.write_text(run_id, "report.md", markdown)
-            report_html_path = store.write_text(run_id, "report.html", html)
-            report_csv_path = store.write_text(run_id, "report.csv", csv_text)
-
+            run_root = store.run_dir(run_id)
+            # The manifest is written before the reports so the static viewer can
+            # show duration, budget and probe results; report paths are deterministic.
             run_duration = perf_counter() - run_started
             run_manifest = {
                 "run_id": run_id,
@@ -301,18 +299,15 @@ class Orchestrator:
                 "finding_count": len(normalized),
                 "budget": budget.snapshot(),
                 "report_paths": {
-                    "markdown": report_md_path,
-                    "html": report_html_path,
-                    "csv": report_csv_path,
+                    "markdown": str(run_root / "report.md"),
+                    "html": str(run_root / "report.html"),
+                    "csv": str(run_root / "report.csv"),
                 },
             }
             store.write_json(run_id, "run_manifest.json", run_manifest)
 
-            run_root = store.run_dir(run_id)
-            artifacts_index = build_artifacts_index(run_root)
-            artifacts_index_path = store.write_json(run_id, "artifacts_index.json", artifacts_index)
-            artifacts_index = build_artifacts_index(run_root)
-            artifacts_index_path = store.write_json(run_id, "artifacts_index.json", artifacts_index)
+            self.write_reports(run_id, store=store)
+            artifacts_index_path = str(run_root / "artifacts_index.json")
 
             self.metadata_store.insert_findings(normalized)
             self.metadata_store.update_run(
@@ -368,6 +363,30 @@ class Orchestrator:
                 "error": error_message,
                 "error_log_path": error_path,
             }
+
+    def write_reports(self, run_id: str, *, store: ArtifactStore | None = None) -> dict[str, str]:
+        """(Re)render report.md/html/csv from the bundle on disk and rebuild the index.
+
+        `report.html` is the self-contained viewer: it embeds the redacted bundle
+        content and the waivers active right now. Run it again (`urt report`) to
+        refresh waiver state. Returns the written paths.
+        """
+        target_store = store or self.artifact_store
+        run_root = target_store.run_dir(run_id)
+        scorecard = target_store.read_json(run_id, "scorecard.json") or {}
+        findings = target_store.read_json(run_id, "findings.json") or []
+
+        paths = {
+            "markdown": target_store.write_text(run_id, "report.md", render_markdown(scorecard, findings)),
+            "csv": target_store.write_text(run_id, "report.csv", render_csv(findings)),
+        }
+        # The file list on the page comes from an index built before the page exists;
+        # the final index (written below) then includes the page itself.
+        target_store.write_json(run_id, "artifacts_index.json", build_artifacts_index(run_root))
+        bundle = load_bundle(run_root, waivers=self.list_waivers())
+        paths["html"] = target_store.write_text(run_id, "report.html", render_run_page(bundle, mode="static"))
+        target_store.write_json(run_id, "artifacts_index.json", build_artifacts_index(run_root))
+        return paths
 
     def _write_engine_findings_sidecar(
         self,

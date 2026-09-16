@@ -1,0 +1,19 @@
+<h3>Target probes</h3>
+{% if probes %}
+<table class="probes">
+  <thead><tr><th>Target</th><th>Type</th><th>Healthcheck</th><th>Detail</th><th>Checked at</th></tr></thead>
+  <tbody>
+  {% for probe in probes %}
+    <tr>
+      <td>{{ probe.get("target_id", "") }}</td>
+      <td>{{ probe.get("target_type", "") }}</td>
+      <td><span class="badge {{ 'ok' if probe.get('ok') else 'fail' }}">{{ "ok" if probe.get("ok") else "failed" }}</span></td>
+      <td>{{ probe.get("detail", "") }}</td>
+      <td class="mono">{{ probe.get("checked_at", "") }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No probe results recorded.</p>
+{% endif %}

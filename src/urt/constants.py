@@ -78,6 +78,35 @@ LEGACY_RAW_DOWNLOAD_ALLOWLIST = ("scorecard.json", "artifacts_index.json", "repo
 # ordinary words); they are still masked by key/position rules.
 MIN_SECRET_LENGTH = 8
 
+# How bundle files are served (API artifact routes and `urt view`). Text-like
+# files are served inline with a fixed media type; everything else (HTML, binaries,
+# unknown suffixes) is an attachment so the browser never renders attacker-influenced
+# tool output in the serving origin.
+ARTIFACT_INLINE_MEDIA_TYPES = {
+    ".json": "application/json",
+    ".jsonl": "application/x-ndjson",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".log": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".yaml": "text/plain; charset=utf-8",
+    ".yml": "text/plain; charset=utf-8",
+}
+ARTIFACT_ATTACHMENT_MEDIA_TYPES = {
+    ".html": "text/html; charset=utf-8",
+}
+ARTIFACT_RESPONSE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    # Artifacts are attacker-influenced tool output; never let them script or be
+    # cached if a UI is served from this origin.
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "no-store",
+}
+
+# Per-finding cap on the pretty-printed `metadata` JSON embedded in report.html.
+# Larger payloads are truncated with a link to the raw artifact.
+REPORT_METADATA_JSON_CAP = 4096
+
 AUDIT_BUNDLE_FILES = (
     "resolved_spec.json",
     "run_manifest.json",
