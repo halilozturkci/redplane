@@ -227,6 +227,122 @@ def test_urt_waivers_revoke_cli(rich_bundle: Bundle, capsys):
     assert main([*base, "waivers", "revoke", "--waiver-id", "nope"]) == 1
 
 
+# --- /ui/waivers ---------------------------------------------------------------------
+
+
+def _csrf(client: TestClient, path: str = "/ui/waivers/new") -> str:
+    page = client.get(path)
+    assert page.status_code == 200
+    import re
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    assert client.cookies.get("urt_csrf") == token
+    return token
+
+
+def test_ui_waivers_list_shows_state_and_match_preview_for_a_run(rich_bundle: Bundle):
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    orch = rich_bundle.orchestrator
+    orch.create_waiver(_waiver(reason="<b>bold</b> reason"))
+    orch.create_waiver(_waiver(waiver_id="w-old", control_id="LLM01", expires_at="2001-01-01T00:00:00+00:00"))
+
+    page = client.get("/ui/waivers")
+    assert page.status_code == 200
+    assert "&lt;b&gt;bold&lt;/b&gt; reason" in page.text and "<b>bold</b>" not in page.text
+    assert 'class="badge ok">active' in page.text
+    assert 'class="badge skipped">expired' in page.text
+    assert "finding in this run" not in page.text  # no run selected: no preview column
+
+    scoped = client.get("/ui/waivers", params={"run_id": rich_bundle.run_id})
+    assert scoped.status_code == 200
+    assert "matches 1 finding in this run" in scoped.text  # w-1 -> garak:3
+    assert "matches 2 findings in this run" in scoped.text  # w-old (expired, still previewed) -> LLM01 prefix
+    assert f'action="/ui/waivers/w-1/revoke"' in scoped.text
+    assert f'action="/ui/waivers/w-old/revoke"' not in scoped.text  # already expired
+    assert client.get("/ui/waivers", params={"run_id": "nope"}).status_code == 404
+
+
+def test_ui_create_waiver_from_finding_prefills_and_previews(rich_bundle: Bundle):
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    run_id = rich_bundle.run_id
+    finding_id = f"{run_id}:{TARGET_ID}:promptfoo:test:0"
+
+    drawer = client.get(f"/ui/runs/{run_id}/findings/detail", params={"finding_id": finding_id})
+    link = f"/ui/waivers/new?run_id={run_id}&amp;finding_id="
+    assert link in drawer.text
+
+    form = client.get("/ui/waivers/new", params={"run_id": run_id, "finding_id": finding_id})
+    assert form.status_code == 200
+    assert f'name="target_id" value="{TARGET_ID}"' in form.text
+    for choice in ("prompt_injection", "promptfoo:harmful:privacy", "LLM01:2025 Prompt Injection", finding_id):
+        assert f'name="control_id" value="{choice}"' in form.text, choice
+    assert 'name="reason" required' in form.text and 'name="owner" required' in form.text
+    default_expiry = parse_expiry(
+        __import__("re").search(r'name="expires_at" value="([^"]+)" required', form.text).group(1)
+    )
+    delta = default_expiry - datetime.now(timezone.utc)
+    assert timedelta(days=29, hours=23) < delta < timedelta(days=30, hours=1)
+    assert "No Run button" not in form.text
+
+    preview = client.get(
+        f"/ui/runs/{run_id}/waiver-preview", params={"control_id": "prompt_injection", "target_id": TARGET_ID}
+    )
+    assert preview.status_code == 200
+    assert preview.text.lstrip().startswith('<div id="waiver-preview"')
+    assert "matches 2 findings in this run" in preview.text
+    assert f"{run_id}:{TARGET_ID}:deepteam:0" in preview.text
+    assert client.get("/ui/waivers/new", params={"run_id": run_id, "finding_id": "nope"}).status_code == 404
+
+
+def test_ui_waiver_create_and_revoke_require_csrf(rich_bundle: Bundle):
+    client = TestClient(create_app(rich_bundle.orchestrator))
+    run_id = rich_bundle.run_id
+    payload = {
+        "run_id": run_id,
+        "target_id": TARGET_ID,
+        "control_id": "mitigation.MitigationBypass",
+        "reason": "ticket SEC-142",
+        "owner": "sec-lead",
+        "expires_at": FUTURE,
+    }
+    # No token at all.
+    assert client.post("/ui/waivers", data=payload).status_code == 403
+    token = _csrf(client)
+    # Wrong token.
+    assert client.post("/ui/waivers", data={**payload, "csrf_token": "x" * 43}).status_code == 403
+    # Cross-site origin with a valid token.
+    cross = client.post(
+        "/ui/waivers", data={**payload, "csrf_token": token}, headers={"Origin": "https://evil.example"}
+    )
+    assert cross.status_code == 403
+    # JSON / multipart bodies are not accepted on the form route.
+    assert client.post("/ui/waivers", json={**payload, "csrf_token": token}).status_code == 415
+    assert rich_bundle.orchestrator.list_waivers() == []
+
+    created = client.post("/ui/waivers", data={**payload, "csrf_token": token}, follow_redirects=False)
+    assert created.status_code == 303
+    assert created.headers["location"] == f"/ui/waivers?run_id={run_id}"
+    stored = rich_bundle.orchestrator.list_waivers()
+    assert len(stored) == 1 and stored[0]["control_id"] == "mitigation.MitigationBypass"
+    waiver_id = stored[0]["waiver_id"]
+    assert "(1 waived)" in client.get(f"/v1/runs/{run_id}/gate").json()["message"]
+
+    missing_reason = client.post("/ui/waivers", data={**payload, "reason": " ", "csrf_token": token})
+    assert missing_reason.status_code == 400
+    assert "reason" in missing_reason.text
+
+    assert client.post(f"/ui/waivers/{waiver_id}/revoke", data={}).status_code == 403
+    revoked = client.post(
+        f"/ui/waivers/{waiver_id}/revoke", data={"csrf_token": token, "run_id": run_id}, follow_redirects=False
+    )
+    assert revoked.status_code == 303
+    assert rich_bundle.orchestrator.get_waiver(waiver_id)["active"] is False
+    assert "waived" not in client.get(f"/v1/runs/{run_id}/gate").json()["message"]
+    assert client.post("/ui/waivers/none/revoke", data={"csrf_token": token}).status_code == 404
+    # Nothing on the UI deletes.
+    assert client.delete(f"/ui/waivers/{waiver_id}").status_code in {404, 405}
+
+
 def test_ui_gate_fragment_reflects_eval_min_pass_rate(rich_bundle: Bundle):
     client = TestClient(create_app(rich_bundle.orchestrator))
     run_id = rich_bundle.run_id

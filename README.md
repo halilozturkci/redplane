@@ -282,12 +282,14 @@ uv run urt findings --run-id <RUN_ID>
 uv run urt artifacts --run-id <RUN_ID>
 uv run urt waivers create --target-id <TARGET> --control-id LLM01:2025 --reason "accepted risk" --owner secops --expires-at 2027-01-01T00:00:00+00:00
 uv run urt waivers list
+uv run urt waivers revoke --waiver-id <WAIVER_ID>          # expires_at := now; row and history kept
 uv run urt report --run-id <RUN_ID> --output-dir ./reports/<RUN_ID>
 uv run urt report --run-id <RUN_ID> --in-place            # refresh report.html (waiver state) inside the run dir
 uv run urt view <RUN_ID> --port 8765                       # loopback viewer for one run directory
 uv run urt serve-api --port 8000                           # JSON API + read-only /ui (loopback only by default)
 uv run urt gate --run-id <RUN_ID> --threshold high
 uv run urt gate --run-id <RUN_ID> --threshold high --explain   # list blocking + waived findings
+uv run urt gate --run-id <RUN_ID> --threshold high --eval-min-pass-rate 0.8   # also fail below 80% eval pass rate
 uv run urt serve-api --host 127.0.0.1 --port 8000
 uv run urt serve-gateway --config templates/gateway_config.sample.yaml
 ```
@@ -1357,9 +1359,12 @@ Endpoints:
 - `GET /v1/runs/{run_id}/artifacts` — `artifacts_index.json` (`path`, `size_bytes`, `sha256`)
 - `GET /v1/runs/{run_id}/artifacts/{path}` — one bundle file, served raw. The path is resolved strictly under the run directory: absolute paths, `.`/`..`/empty segments, backslashes and any symlink component are rejected with `400`. JSON/text/CSV/Markdown are served inline with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: no-store`; HTML and unknown types are `Content-Disposition: attachment`. For bundles older than `1.1` only `scorecard.json`, `artifacts_index.json` and `report.md/html/csv` are served raw; every other file answers `409` (spec, manifest, findings, summaries, sidecars and raw tool logs may hold expanded credentials); use the redacting JSON endpoints above instead, which for such bundles also mask `metadata.env_overrides` dicts, `command` argv and the free-text `error` / `error_message` strings by position
 - `GET /v1/runs/{run_id}/artifacts.zip` — the whole run directory (`<run_id>/...`), regular files only; entries can be verified against `artifacts_index.json` sha256. `409` for bundles older than `1.1`
-- `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists
-- `POST /v1/waivers`
-- `GET /v1/waivers`
+- `GET /v1/runs/{run_id}/gate?threshold=high&ignore_waivers=false[&eval_min_pass_rate=0.8]` — structured verdict: `ok`, `message`, `blocking[]` (finding rows), `waived[]` (finding rows + `waiver_id`, `control_id`, `owner`, `expires_at`); `404` until `findings.json` exists. `eval_min_pass_rate` (0..1) additionally fails the gate when the scorecard `eval_pass_rate` is below it; a run **without evaluator scores fails** that check (`eval_ok: false`, "eval pass rate unavailable") instead of passing on the scorecard's default `0.0`. `eval_ok` is `null` when no minimum was requested
+- `GET /v1/runs/{run_id}/waiver-preview?control_id=&target_id=*` — the findings of this run a waiver with these ids would match (`count`, `matches[]` as gate rows). Uses the gate's own `control_matches()` / `target_matches()` server-side (exact match on category, sub_category, finding_id, engine, attack_vector or a framework label, or an `"X "` / `"X:"` prefix of one); expiry is not considered
+- `POST /v1/waivers` — `target_id`, `control_id`, `reason`, `owner`, `expires_at` (ISO-8601, `400` otherwise); response carries `active`
+- `GET /v1/waivers[?target_id=&active=true|false]` — rows with `active`
+- `GET /v1/waivers/{waiver_id}` — row plus `events[]` (`created`, `expiry_changed`, `revoked`, `replaced`; `at`, `expires_at_before`, `expires_at_after`, `note`)
+- `PATCH /v1/waivers/{waiver_id}` — `{"revoke": true}` sets `expires_at` to now; `{"expires_at": "<iso>"}` moves it. Nothing else is mutable and there is **no delete**: waivers are append-only audit records (`urt waivers revoke --waiver-id` is the CLI face)
 
 ### `/ui`: read-only pages on the same server
 
@@ -1369,7 +1374,9 @@ CDN, no Node build). Every page works without JavaScript; htmx only swaps
 fragments in place.
 
 - `GET /ui[?target=&name_prefix=&gate_threshold=]` — runs list, newest first: name, profile, status (with last update for `running`), created, duration, targets, engines executed / skipped, critical and high counts, ASR, eval pass rate, gate verdict at the profile default or the chosen threshold.
-- `GET /ui/runs/{run_id}[?threshold=&ignore_waivers=]` — run detail: scorecard tiles and budget snapshot, **read-only gate panel** (threshold selector, ignore-waivers toggle, blocking and waived lists), framework coverage, evaluation results, probes, engine invocations, evaluator summaries, bundle files with sha256 linked through `/v1/runs/{id}/artifacts/…`, redacted resolved spec, links to `report.html` and the zip.
+- `GET /ui/runs/{run_id}[?threshold=&ignore_waivers=&eval_min_pass_rate=]` — run detail: scorecard tiles and budget snapshot, gate panel (threshold selector, ignore-waivers toggle, optional minimum eval pass rate, blocking and waived lists), framework coverage, evaluation results, probes, engine invocations, evaluator summaries, bundle files with sha256 linked through `/v1/runs/{id}/artifacts/…`, redacted resolved spec, links to `report.html` and the zip.
+- `GET /ui/waivers[?run_id=&show=all|active|expired]` — waiver list with active/expired state and, when a run is selected, "matches N findings in this run" computed server-side with the gate's `control_matches()`. Revoke button per active waiver (`POST /ui/waivers/{id}/revoke` → expiry set to now, history kept).
+- `GET /ui/waivers/new?run_id=&finding_id=` — create a waiver from a finding: `target_id` pre-filled, `control_id` offered as the finding's category, sub-category, each framework label, or the finding id; reason, owner and expiry required (expiry defaults to +30 days); live match preview (`/ui/runs/{id}/waiver-preview` fragment, also reachable with the no-JS "Preview matches" button). `POST /ui/waivers` creates. The drawer in the findings explorer links here.
 - `GET /ui/runs/{run_id}/findings[?severity=&engine=&category=&sub_category=&target=&success=&waived=&kind=&q=&finding_id=]` — findings explorer: facets plus free-text search over id, description, attack vector and transcript; a drawer with description, confidence, framework chips, repro steps, evidence links and the per-engine transcript. Fragments: `/findings/table`, `/findings/detail?finding_id=`, `/gate`.
 - `GET /ui/static/{app.css,htmx.min.js}` — the only assets served.
 
@@ -1382,8 +1389,14 @@ no-store`. Pre-1.1 bundles are redacted at read time, labelled, and their
 non-allowlisted files are not linked (the API answers `409` for them anyway).
 There is **no authentication**: `serve-api` binds `127.0.0.1` and refuses any
 other `--host` unless `--unsafe-allow-non-loopback` is passed; reach a remote
-machine through an SSH tunnel instead. Read-only by design: waivers are the only
-mutation and they stay on the CLI/JSON API for now.
+machine through an SSH tunnel instead. Waivers are the only mutation the UI offers
+(create and revoke, never delete). Those form posts are CSRF-protected: a random
+token is set as an `HttpOnly; SameSite=Strict` cookie scoped to `/ui` and embedded
+in the form, both must match (`hmac.compare_digest`), and a request carrying
+`Origin` / `Referer` / `Sec-Fetch-Site` must be same-origin. Only
+`application/x-www-form-urlencoded` bodies are accepted on the form routes (`415`
+otherwise), and the JSON API only parses `application/json`, so a cross-site HTML
+form cannot reach either.
 
 `POST /v1/runs` is **synchronous**: the HTTP request blocks until the orchestrator
 returns. The only upper bound is the spec's `budget.max_duration_seconds` (profile
@@ -1462,7 +1475,8 @@ These `RunSpec` / gateway fields are **enforced at runtime** (not schema-only):
 | `enabled_scenarios` | Promptfoo filters dataset/preset rows; other CLIs receive `URT_ENABLED_SCENARIOS` |
 | `rate_limits` | HTTP send spacing (`requests_per_minute` / `min_interval_seconds`) |
 | evaluator `fail_open: false` | Failed evaluator aborts the run (same as engines) |
-| waivers | `urt gate` skips matching active findings; `--ignore-waivers` bypasses; `--explain` lists blocking and waived findings with the waiver that matched |
+| waivers | `urt gate` skips matching active findings; `--ignore-waivers` bypasses; `--explain` lists blocking and waived findings with the waiver that matched; revoke sets `expires_at` to now and keeps the row (append-only `waiver_events` history) |
+| `--eval-min-pass-rate` | `urt gate` / `GET …/gate?eval_min_pass_rate=` also fail when the scorecard `eval_pass_rate` is below the floor; a run with no evaluator scores fails the check rather than passing on the default `0.0` |
 | spec `${VAR_NAME}` | Expanded from the process environment at `load_run_spec` |
 | `gateway.api_key` | Optional; missing key keeps the open Promptfoo dummy-key path |
 

@@ -58,7 +58,8 @@ RunSpec → Orchestrator.execute()
 - `artifact_policy.py` — inline-vs-attachment and header rules for serving bundle files (shared by the API and `urt view`)
 - `storage/` — `ArtifactStore` (filesystem, writes to `.urt_state/artifacts/<run_id>/`) + `MetadataStore` (SQLite)
 - `policy/mapping.py` — Maps findings to OWASP LLM / OWASP Agentic / MITRE ATLAS frameworks
-- `policy/waivers.py` — Active waiver matching used by `urt gate`
+- `policy/waivers.py` — Active waiver matching used by `urt gate`; `preview_matches()` backs the waiver preview (never reimplement `control_matches()` client-side)
+- `ui/csrf.py`, `ui/forms.py` — double-submit CSRF and stdlib urlencoded form parsing for the `/ui` waiver forms (the only UI mutation)
 
 **Adapter registries (in `constants.py`):**
 - Targets: `http`, `copilot`, `foundry`
@@ -73,7 +74,7 @@ An OpenAI-compatible proxy (`stdlib ThreadingHTTPServer`, not FastAPI) that rout
 
 ### CLI Commands
 
-`urt init`, `urt validate`, `urt probe`, `urt run`, `urt report` (`--in-place` re-renders the bundle's own reports), `urt gate`, `urt waivers`, `urt runs`, `urt findings`, `urt artifacts`, `urt view`, `urt serve-api`, `urt serve-gateway`
+`urt init`, `urt validate`, `urt probe`, `urt run`, `urt report` (`--in-place` re-renders the bundle's own reports), `urt gate` (`--explain`, `--eval-min-pass-rate`), `urt waivers` (`list`, `create`, `revoke` — append-only, no delete), `urt runs`, `urt findings`, `urt artifacts`, `urt view`, `urt serve-api`, `urt serve-gateway`
 
 ### Runtime contracts (do not re-treat as schema-only)
 

@@ -8,16 +8,23 @@ page also works without JavaScript (plain GET forms, ``?finding_id=`` drawer).
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timedelta, timezone
 from importlib import resources
+from typing import Any
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from ..constants import SEVERITY_ORDER
+from ..constants import SEVERITY_ORDER, WAIVER_DEFAULT_EXPIRY_DAYS
 from ..orchestrator import Orchestrator
+from ..policy.waivers import waiver_is_active
 from ..report import parse_eval_min_pass_rate
-from .bundle import RunBundle, load_bundle
+from .bundle import FindingView, RunBundle, load_bundle
+from .csrf import CSRF_COOKIE, CSRF_FIELD, csrf_token_for, set_csrf_cookie, verify_csrf
 from .filters import FindingFilters, filter_findings
+from .forms import read_form
 from .render import SERVED_CSP, render_template, served_context
 
 STATIC_ASSETS = {
@@ -149,6 +156,148 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
             raise HTTPException(status_code=404, detail="Finding not found")
         context = served_context(bundle)
         return html(render_template("partials/_finding_drawer.html", view=view, **context))
+
+    # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
+
+    def page(template: str, request: Request, status_code: int = 200, **context: Any) -> HTMLResponse:
+        token = csrf_token_for(request)
+        response = html(
+            render_template(template, mode="served", csrf_token=token, csrf_field=CSRF_FIELD, **context),
+            status_code=status_code,
+        )
+        if request.cookies.get(CSRF_COOKIE) != token:
+            set_csrf_cookie(response, token)
+        return response
+
+    def default_expiry() -> str:
+        return (datetime.now(timezone.utc) + timedelta(days=WAIVER_DEFAULT_EXPIRY_DAYS)).replace(microsecond=0).isoformat()
+
+    def run_choices() -> list[dict[str, str]]:
+        return [{"run_id": row["run_id"], "name": str(row.get("name", ""))} for row in orch.metadata_store.list_runs()]
+
+    def control_choices_for(view: FindingView) -> list[tuple[str, str]]:
+        record = view.record
+        choices: list[tuple[str, str]] = [("category", str(record.get("category", "")))]
+        if record.get("sub_category"):
+            choices.append(("sub_category", str(record["sub_category"])))
+        for framework, label in view.mapping_chips:
+            choices.append((framework, label))
+        choices.append(("finding_id", view.finding_id))
+        return [(label, value) for label, value in choices if value]
+
+    def preview_for(run_id: str, *, control_id: str, target_id: str) -> dict[str, Any] | None:
+        if not orch.get_run(run_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+        matches = orch.waiver_preview(run_id, control_id=control_id, target_id=target_id or "*")
+        if matches is None:
+            return None
+        return {"run_id": run_id, "control_id": control_id, "target_id": target_id or "*", "count": len(matches), "matches": matches}
+
+    @router.get("/waivers", response_class=HTMLResponse)
+    def waivers_list(request: Request, run_id: str = Query(default=""), show: str = Query(default="all")) -> HTMLResponse:
+        if show not in {"all", "active", "expired"}:
+            raise HTTPException(status_code=400, detail="show must be all, active or expired")
+        rows = [{**row, "active": waiver_is_active(row)} for row in orch.list_waivers()]
+        if show == "active":
+            rows = [row for row in rows if row["active"]]
+        elif show == "expired":
+            rows = [row for row in rows if not row["active"]]
+        previews: dict[str, int | None] = {}
+        if run_id:
+            if not orch.get_run(run_id):
+                raise HTTPException(status_code=404, detail="Run not found")
+            for row in rows:
+                matches = orch.waiver_preview(run_id, control_id=str(row["control_id"]), target_id=str(row["target_id"]))
+                previews[str(row["waiver_id"])] = None if matches is None else len(matches)
+        return page(
+            "waivers_list.html", request, waivers=rows, run_id=run_id, show=show, previews=previews, runs=run_choices()
+        )
+
+    @router.get("/waivers/new", response_class=HTMLResponse)
+    def waiver_new(
+        request: Request,
+        run_id: str = Query(default=""),
+        finding_id: str = Query(default=""),
+        target_id: str = Query(default=""),
+        control_id: str = Query(default=""),
+    ) -> Response:
+        if CSRF_FIELD in request.query_params:
+            # The no-JS "Preview" button submits the whole form with GET; keep the token out of URLs.
+            clean = [(k, v) for k, v in request.query_params.multi_items() if k != CSRF_FIELD]
+            return RedirectResponse(f"/ui/waivers/new?{urlencode(clean)}", status_code=303, headers=PAGE_HEADERS)
+        finding: FindingView | None = None
+        choices: list[tuple[str, str]] = []
+        if finding_id:
+            if not run_id:
+                raise HTTPException(status_code=400, detail="finding_id requires run_id")
+            finding = bundle_for(run_id).find(finding_id)
+            if finding is None:
+                raise HTTPException(status_code=404, detail="Finding not found")
+            choices = control_choices_for(finding)
+            target_id = target_id or str(finding.record.get("target_id", ""))
+        values = {"target_id": target_id, "control_id": control_id, "reason": "", "owner": "", "expires_at": default_expiry()}
+        preview = preview_for(run_id, control_id=control_id, target_id=target_id) if run_id and control_id else None
+        return page(
+            "waiver_new.html",
+            request,
+            run_id=run_id,
+            finding=finding,
+            control_choices=choices,
+            values=values,
+            preview=preview,
+            error=None,
+        )
+
+    @router.get("/runs/{run_id}/waiver-preview", response_class=HTMLResponse)
+    def waiver_preview_fragment(
+        run_id: str, control_id: str = Query(default=""), target_id: str = Query(default="*")
+    ) -> HTMLResponse:
+        if not control_id.strip():
+            return html('<div id="waiver-preview" class="preview"><p class="muted">Choose a control id to preview.</p></div>')
+        preview = preview_for(run_id, control_id=control_id, target_id=target_id)
+        if preview is None:
+            raise HTTPException(status_code=404, detail="Findings not available for run")
+        return html(render_template("partials/_waiver_preview.html", mode="served", preview=preview))
+
+    @router.post("/waivers", response_class=HTMLResponse)
+    async def waiver_create(request: Request) -> Response:
+        form = await read_form(request)
+        verify_csrf(request, form.get(CSRF_FIELD))
+        run_id = form.get("run_id", "").strip()
+        values = {key: form.get(key, "").strip() for key in ("target_id", "control_id", "reason", "owner", "expires_at")}
+        missing = [key for key, value in values.items() if not value]
+        error: str | None = None
+        if missing:
+            error = f"Required: {', '.join(missing)}"
+        else:
+            try:
+                orch.create_waiver({"waiver_id": str(uuid.uuid4()), **values})
+            except ValueError as exc:
+                error = str(exc)
+        if error:
+            return page(
+                "waiver_new.html",
+                request,
+                status_code=400,
+                run_id=run_id,
+                finding=None,
+                control_choices=[],
+                values=values,
+                preview=None,
+                error=error,
+            )
+        target = f"/ui/waivers?run_id={quote(run_id, safe='')}" if run_id else "/ui/waivers"
+        return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
+
+    @router.post("/waivers/{waiver_id}/revoke")
+    async def waiver_revoke(request: Request, waiver_id: str) -> Response:
+        form = await read_form(request)
+        verify_csrf(request, form.get(CSRF_FIELD))
+        if orch.revoke_waiver(waiver_id, note=form.get("note") or None) is None:
+            raise HTTPException(status_code=404, detail="Waiver not found")
+        run_id = form.get("run_id", "").strip()
+        target = f"/ui/waivers?run_id={quote(run_id, safe='')}" if run_id else "/ui/waivers"
+        return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
 
     @router.get("/static/{name}")
     def static_asset(name: str) -> Response:
