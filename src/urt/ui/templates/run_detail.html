@@ -8,6 +8,8 @@
   {% if report_href %}<a href="{{ report_href }}">report.html (download)</a>{% endif %}
   {% if zip_href %}<a href="{{ zip_href }}">bundle zip</a>{% endif %}
   <a href="{{ api_href }}">JSON</a>
+  {% set gw = manifest.get("gateway_traces") or {} %}
+  <a href="/ui/traces?run_id={{ run_id | urlencode }}" title="exact = the tool sent X-URT-Run-Id; by window = untagged gateway requests inside the run's time window">Gateway traces ({{ (gw.get("by_run_id") or manifest.get("trace_ids") or []) | length }} exact + {{ (gw.get("by_time_window") or []) | length }} by window)</a>
 </div>
 
 <h2 id="scorecard">Scorecard</h2>

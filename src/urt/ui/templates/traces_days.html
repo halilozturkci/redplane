@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Redplane gateway traces{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Gateway traces</h1>
+<p class="note">
+  Read-only view of the gateway audit root <code>{{ trace_root }}</code> (<code>urt serve-gateway</code>
+  <code>audit.artifact_root</code>): one JSON file per <code>/v1/chat/completions</code> request, headers redacted and
+  bodies truncated as the gateway stored them. This page reads the files directly, so it works while the gateway is down.
+</p>
+
+{% if linked is not none %}
+<h2>Traces linked to run <span class="mono">{{ linked.run_id }}</span></h2>
+<p class="note">
+  From <code>run_manifest.json</code> <code>gateway_traces</code>: <strong>run_id</strong> = the attack tool forwarded
+  <code>X-URT-Run-Id</code> ({{ linked.by_run_id | length }} exact, as tagged by the tool — these are the manifest's <code>trace_ids</code>);
+  <strong>time_window</strong> = an untagged request inside the run's
+  {% if linked.window %}window {{ linked.window.from }} → {{ linked.window.to }}{% else %}window{% endif %}
+  ({{ linked.by_time_window | length }}, weaker join: a concurrent run or a manual request through the same gateway lands here too).
+  <a href="/ui/runs/{{ linked.run_id | urlencode }}">Back to the run</a>.
+</p>
+{% if linked.traces %}
+{% set rows = linked.traces %}
+{% include "partials/_trace_rows.html" %}
+{% else %}
+<p class="muted">No gateway traces are linked to this run{% if not linked.window %} (the run has no completed or failed manifest with a trace link, e.g. it was interrupted){% endif %}.</p>
+{% endif %}
+{% endif %}
+
+<h2>Days</h2>
+{% if days %}
+<table>
+  <thead><tr><th>Day (UTC)</th><th class="num">Traces</th></tr></thead>
+  <tbody>
+  {% for row in days %}
+    <tr><td><a href="/ui/traces/{{ row.day }}" class="mono">{{ row.day }}</a></td><td class="num">{{ row.count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No trace directories under <code>{{ trace_root }}</code>. Point <code>URT_GATEWAY_TRACE_ROOT</code> (or <code>--gateway-trace-root</code>) at the gateway's <code>audit.artifact_root</code>.</p>
+{% endif %}
+
+<h2>Gateway sessions</h2>
+{% if sessions is not none %}
+<p class="note">{{ sessions.count }} session(s) in the running gateway (TTL {{ sessions.ttl_seconds }} s). Identifiers and presence only; no conversation content is available here or in the gateway.</p>
+{% if sessions.sessions %}
+<table>
+  <thead><tr><th>Session id</th><th>Source</th><th>Last used (UTC)</th><th class="num">Idle</th><th>Foundry thread</th><th>Copilot live client</th></tr></thead>
+  <tbody>
+  {% for row in sessions.sessions %}
+    <tr>
+      <td class="mono">{{ row.session_id }}</td>
+      <td>{{ row.source }}</td>
+      <td class="mono">{{ row.last_used_utc }}</td>
+      <td class="num">{{ row.idle_seconds | seconds }}</td>
+      <td>{% if row.thread_id_present %}<span class="badge ok">thread_id present</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{% if row.live_client_present %}<span class="badge ok">live client present</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No live or persisted sessions.</p>
+{% endif %}
+{% else %}
+<p class="muted">{{ sessions_error }}</p>
+<p class="note">Sessions live in the gateway process only. Set <code>URT_GATEWAY_URL</code> (and <code>URT_GATEWAY_API_KEY</code> when the gateway has <code>gateway.api_key</code>) on <code>urt serve-api</code>; this server then asks the gateway's <code>GET /v1/sessions</code> and shows ids, last use and whether a Foundry <code>thread_id</code> or a live Copilot client is present — never content.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

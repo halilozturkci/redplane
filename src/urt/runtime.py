@@ -229,6 +229,11 @@ def merge_profile_section(run_profile: str, section: str, explicit: dict[str, An
 
 def build_runtime_env(context: Any) -> dict[str, str]:
     env: dict[str, str] = {}
+    run_id = getattr(context, "run_id", None)
+    if run_id:
+        # Tools that call the gateway can forward this as `X-URT-Run-Id` so their
+        # traces join the run exactly rather than by time window.
+        env["URT_RUN_ID"] = str(run_id)
     seed = getattr(context, "seed", None)
     if seed is not None:
         env["URT_SEED"] = str(seed)

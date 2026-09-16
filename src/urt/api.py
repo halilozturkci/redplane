@@ -31,6 +31,8 @@ from .constants import (
     SEVERITY_ORDER,
     STAGE_EVENTS_FILE,
 )
+from .gateway.traces import TracePathError
+from .gateway_client import GatewayUnavailable, fetch_sessions
 from .jobs import RunWorker
 from .orchestrator import Orchestrator
 from .policy.waivers import waiver_is_active
@@ -315,6 +317,53 @@ def create_app(orchestrator: Orchestrator | None = None, *, api_key: str | None 
             raise HTTPException(status_code=400, detail={"errors": validation.errors})
         rows = probe_spec(validation.spec)
         return {"ok": all(row["ok"] for row in rows), "targets": rows}
+
+    # --- gateway traces (G10): read-only over the trace root; works with the gateway down ---
+
+    @app.get("/v1/traces")
+    def list_trace_days() -> dict[str, Any]:
+        return {"trace_root": str(orch.gateway_traces.root), "days": orch.gateway_traces.days()}
+
+    @app.get("/v1/traces/{day}")
+    def list_traces(
+        day: str,
+        target_id: str | None = Query(default=None),
+        status_code: int | None = Query(default=None),
+        run_id: str | None = Query(default=None),
+    ) -> list[dict[str, Any]]:
+        try:
+            return orch.gateway_traces.list_day(day, target_id=target_id or None, status_code=status_code, run_id=run_id or None)
+        except TracePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/v1/traces/{day}/{trace_id}")
+    def get_trace(day: str, trace_id: str) -> dict[str, Any]:
+        """The trace as the gateway stored it: headers redacted, bodies truncated to
+        `audit.max_body_bytes`; `audit_path` is relative to the trace root."""
+        try:
+            trace = orch.gateway_traces.get_on_day(day, trace_id)
+        except TracePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if trace is None:
+            raise HTTPException(status_code=404, detail="Trace not found")
+        return trace
+
+    @app.get("/v1/runs/{run_id}/traces")
+    def get_run_traces(run_id: str) -> dict[str, Any]:
+        _require_run(run_id)
+        linked = orch.run_traces(run_id)
+        if linked is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return linked
+
+    @app.get("/v1/gateway/sessions")
+    def get_gateway_sessions() -> dict[str, Any]:
+        """Sessions of the running gateway (`URT_GATEWAY_URL`): ids, last use and presence
+        flags only. `503` when no gateway is configured or reachable."""
+        try:
+            return fetch_sessions()
+        except GatewayUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/v1/runs/{run_a}/diff/{run_b}")
     def get_diff(run_a: str, run_b: str) -> dict[str, Any]:

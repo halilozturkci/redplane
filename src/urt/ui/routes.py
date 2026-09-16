@@ -22,6 +22,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from ..auth import SESSION_COOKIE, clear_session_cookie, failed_auth_delay, key_matches, safe_next, set_session_cookie
 from ..constants import SEVERITY_ORDER, TERMINAL_RUN_STATUSES, WAIVER_DEFAULT_EXPIRY_DAYS
 from ..diff import comparable, comparable_runs
+from ..gateway.traces import TracePathError
+from ..gateway_client import GatewayUnavailable, fetch_sessions
 from ..orchestrator import Orchestrator
 from ..policy.waivers import waiver_is_active
 from ..report import parse_eval_min_pass_rate
@@ -414,6 +416,69 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         if request.headers.get("hx-request") == "true":
             return Response(status_code=200, headers={**PAGE_HEADERS, "HX-Redirect": target})
         return RedirectResponse(target, status_code=303, headers=PAGE_HEADERS)
+
+    # --- gateway traces and sessions (§4.8): read-only ---
+
+    def sessions_context() -> dict[str, Any]:
+        try:
+            return {"sessions": fetch_sessions(), "sessions_error": None}
+        except GatewayUnavailable as exc:
+            return {"sessions": None, "sessions_error": str(exc)}
+
+    @router.get("/traces", response_class=HTMLResponse)
+    def traces_days(request: Request, run_id: str = Query(default="")) -> HTMLResponse:
+        linked = None
+        if run_id:
+            linked = orch.run_traces(run_id)
+            if linked is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+        return page(
+            "traces_days.html",
+            request,
+            trace_root=str(orch.gateway_traces.root),
+            days=orch.gateway_traces.days(),
+            linked=linked,
+            **sessions_context(),
+        )
+
+    @router.get("/traces/{day}", response_class=HTMLResponse)
+    def traces_day(
+        request: Request,
+        day: str,
+        target_id: str = Query(default=""),
+        status_code: str = Query(default=""),
+        run_id: str = Query(default=""),
+    ) -> HTMLResponse:
+        code: int | None = None
+        if status_code.strip():
+            if not status_code.strip().isdigit():
+                raise HTTPException(status_code=400, detail="status_code must be an integer")
+            code = int(status_code.strip())
+        try:
+            everything = orch.gateway_traces.list_day(day)
+            rows = orch.gateway_traces.list_day(day, target_id=target_id or None, status_code=code, run_id=run_id or None)
+        except TracePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return page(
+            "traces_day.html",
+            request,
+            day=day,
+            rows=rows,
+            total=len(everything),
+            targets=sorted({str(row.get("target_id") or "") for row in everything} - {""}),
+            status_codes=sorted({int(row["status_code"]) for row in everything if isinstance(row.get("status_code"), int)}),
+            filters={"target_id": target_id, "status_code": status_code.strip(), "run_id": run_id},
+        )
+
+    @router.get("/traces/{day}/{trace_id}", response_class=HTMLResponse)
+    def trace_detail(request: Request, day: str, trace_id: str) -> HTMLResponse:
+        try:
+            trace = orch.gateway_traces.get_on_day(day, trace_id)
+        except TracePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if trace is None:
+            raise HTTPException(status_code=404, detail="Trace not found")
+        return page("trace_detail.html", request, trace=trace)
 
     # --- waivers (the only mutation the UI offers; append-only, CSRF-protected) ---
 

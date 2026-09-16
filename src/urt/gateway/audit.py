@@ -27,14 +27,22 @@ class GatewayAuditStore:
     def _utc_timestamp() -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
+    @property
+    def root(self) -> Path:
+        return self._root
+
     def write_trace(self, trace_id: str, payload: dict[str, Any]) -> str:
-        day_dir = self._root / self._utc_day()
+        """Write the redacted trace; returns its path **relative to the audit root**
+        (`YYYYMMDD/trace-….json`), which is what clients may see."""
+        day = self._utc_day()
+        day_dir = self._root / day
         day_dir.mkdir(parents=True, exist_ok=True)
-        path = day_dir / f"trace-{self._utc_timestamp()}-{trace_id}.json"
+        name = f"trace-{self._utc_timestamp()}-{trace_id}.json"
+        path = day_dir / name
 
         sanitized = self._sanitize(payload)
         path.write_text(json.dumps(sanitized, indent=2, ensure_ascii=False), encoding="utf-8")
-        return str(path)
+        return f"{day}/{name}"
 
     def _sanitize(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = redact_payload(payload)
