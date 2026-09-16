@@ -1,0 +1,20 @@
+<table class="traces">
+  <thead>
+    <tr><th>Timestamp (UTC)</th><th>Target</th><th>Connector</th><th>Route</th><th class="num">Status</th><th class="num">Latency</th><th>Run</th>{% if rows and rows[0].get("link") is defined %}<th>Link</th>{% endif %}<th>Trace</th></tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td class="mono">{{ row.get("timestamp_utc", "") }}</td>
+      <td>{{ row.get("target_id", "") }}</td>
+      <td>{{ row.get("connector", "") }}</td>
+      <td>{{ row.get("route_source", "") }}</td>
+      <td class="num"><span class="badge {{ 'ok' if row.get('status_code') == 200 else 'fail' }}">{{ row.get("status_code", "") }}</span></td>
+      <td class="num">{% if row.get("latency_ms") is not none %}{{ row.get("latency_ms") }} ms{% endif %}</td>
+      <td>{% if row.get("run_id") %}<a href="/ui/runs/{{ row.get("run_id") | urlencode }}" class="mono">{{ row.get("run_id") }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      {% if row.get("link") is defined %}<td>{{ row.get("link") }}</td>{% endif %}
+      <td>{% if row.get("missing") %}<span class="mono muted">{{ row.get("trace_id") }}</span> <span class="note">(file no longer present)</span>{% else %}<a href="/ui/traces/{{ row.get("day") }}/{{ row.get("trace_id") }}" class="mono">{{ row.get("trace_id") }}</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>

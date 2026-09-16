@@ -76,7 +76,9 @@ Adding a new engine/evaluator: create the adapter file, add to `constants.SUPPOR
 
 ### Network gateway (`src/urt/gateway/`)
 
-An OpenAI-compatible proxy (`stdlib ThreadingHTTPServer`, not FastAPI) that routes `/v1/chat/completions` to heterogeneous backends (Copilot Studio, Azure OpenAI, Foundry, generic HTTP). Routing modes: header (`X-URT-Target`), model prefix (`urt/<target>`), or path. Optional `gateway.api_key`; Foundry `thread_id` can persist via `session_persist_path`. SSE is a single-chunk shim. Control-plane API (`urt serve-api`) is FastAPI.
+An OpenAI-compatible proxy (`stdlib ThreadingHTTPServer`, not FastAPI) that routes `/v1/chat/completions` to heterogeneous backends (Copilot Studio, Azure OpenAI, Foundry, generic HTTP). Routing modes: header (`X-URT-Target`), model prefix (`urt/<target>`), or path. Optional `gateway.api_key`; Foundry `thread_id` can persist via `session_persist_path`. `GET /v1/sessions` lists session ids + presence flags (no content). SSE is a single-chunk shim. Control-plane API (`urt serve-api`) is FastAPI.
+
+Traces: one redacted JSON per request under `audit.artifact_root/YYYYMMDD/`; `X-URT-Run-Id` (engines get `URT_RUN_ID` in their env) tags the trace with the run. `gateway/traces.py` (`TraceIndex`) is the **read-only** index the orchestrator uses to record `trace_ids` / `gateway_traces` in `run_manifest.json` and that `/v1/traces…` + `/ui/traces` browse (root: `URT_GATEWAY_TRACE_ROOT` / `--gateway-trace-root`). `gateway_client.py` fetches `/v1/sessions` from `URT_GATEWAY_URL` for `/v1/gateway/sessions`.
 
 ### CLI Commands
 

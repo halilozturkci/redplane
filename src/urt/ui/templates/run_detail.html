@@ -8,6 +8,7 @@
   {% if report_href %}<a href="{{ report_href }}">report.html (download)</a>{% endif %}
   {% if zip_href %}<a href="{{ zip_href }}">bundle zip</a>{% endif %}
   <a href="{{ api_href }}">JSON</a>
+  <a href="/ui/traces?run_id={{ run_id | urlencode }}" title="gateway requests linked to this run (X-URT-Run-Id tag or time window)">Gateway traces ({{ (manifest.get("trace_ids") or []) | length }})</a>
 </div>
 
 <h2 id="scorecard">Scorecard</h2>

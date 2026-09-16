@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Redplane gateway trace {{ trace.trace_id }}{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Gateway trace <span class="mono">{{ trace.trace_id }}</span></h1>
+<p class="note"><a href="/ui/traces/{{ trace.day }}">Traces on {{ trace.day }}</a> · file <code>{{ trace.audit_path }}</code> (relative to the trace root) · <a href="/v1/traces/{{ trace.day }}/{{ trace.trace_id }}">JSON</a></p>
+<div class="meta">
+  <span><strong>Timestamp:</strong> <span class="mono">{{ trace.get("timestamp_utc", "") }}</span></span>
+  <span><strong>Target:</strong> {{ trace.get("target_id", "") }}</span>
+  <span><strong>Connector:</strong> {{ trace.get("connector", "") }}</span>
+  <span><strong>Route:</strong> {{ trace.get("route_source", "") }}</span>
+  <span><strong>Status:</strong> <span class="badge {{ 'ok' if trace.get('status_code') == 200 else 'fail' }}">{{ trace.get("status_code", "") }}</span></span>
+  <span><strong>Latency:</strong> {{ trace.get("latency_ms", "") }} ms</span>
+  <span><strong>Run:</strong> {% if trace.get("run_id") %}<a href="/ui/runs/{{ trace.get("run_id") | urlencode }}" class="mono">{{ trace.get("run_id") }}</a>{% else %}<span class="muted">not tagged</span>{% endif %}</span>
+</div>
+<p class="note">Shown as stored: request headers were redacted and bodies truncated to <code>audit.max_body_bytes</code> by the gateway when it wrote the file. Prompts and model output are attacker-influenced text and are rendered as text.</p>
+
+{% if trace.get("error") %}
+<h2>Error</h2>
+<pre>{{ trace.get("error") | pretty_json }}</pre>
+{% endif %}
+
+<h2>Request</h2>
+{% set req = trace.get("request") or {} %}
+<h3>Path</h3>
+<pre>{{ req.get("path", "") }}</pre>
+<h3>Headers (redacted)</h3>
+{% if req.get("headers") %}
+<table>
+  <thead><tr><th>Header</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for key, value in (req.get("headers") or {}).items() | sort %}
+    <tr><td class="mono">{{ key }}</td><td class="mono">{{ value }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No headers recorded.</p>{% endif %}
+<h3>Body (truncated as stored)</h3>
+<pre>{{ req.get("body") if req.get("body") is string else (req.get("body") | pretty_json) }}</pre>
+
+<h2>Response</h2>
+{% set res = trace.get("response") or {} %}
+{% if res.get("headers") %}
+<h3>Headers (redacted)</h3>
+<table>
+  <thead><tr><th>Header</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for key, value in (res.get("headers") or {}).items() | sort %}
+    <tr><td class="mono">{{ key }}</td><td class="mono">{{ value }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<h3>Body (truncated as stored)</h3>
+<pre>{{ res.get("body") if res.get("body") is string else (res.get("body") | pretty_json) }}</pre>
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

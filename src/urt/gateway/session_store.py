@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,48 @@ class SessionStore:
     def __len__(self) -> int:
         with self._lock:
             return len(self._sessions)
+
+    def describe(self) -> list[dict[str, Any]]:
+        """Identifiers and presence flags for every unexpired session — live entries and
+        persisted Foundry threads not yet restored into memory. Never the client object,
+        the `thread_id` value or any message content."""
+        now_mono = time.monotonic()
+        now_wall = time.time()
+        rows: list[dict[str, Any]] = []
+        with self._lock:
+            for session_id, entry in self._sessions.items():
+                idle = now_mono - entry.last_used
+                if idle > self._ttl:
+                    continue
+                rows.append(
+                    {
+                        "session_id": session_id,
+                        "source": "live",
+                        "last_used_utc": datetime.fromtimestamp(now_wall - idle, tz=timezone.utc).isoformat(),
+                        "idle_seconds": round(idle, 3),
+                        "thread_id_present": bool(entry.thread_id),
+                        "live_client_present": entry.client is not None,
+                    }
+                )
+            for session_id, persisted in self._persisted_wall.items():
+                if session_id in self._sessions:
+                    continue
+                last_used_wall = float(persisted.get("last_used_wall", 0.0))
+                idle = now_wall - last_used_wall
+                if idle > self._ttl:
+                    continue
+                rows.append(
+                    {
+                        "session_id": session_id,
+                        "source": "persisted",
+                        "last_used_utc": datetime.fromtimestamp(last_used_wall, tz=timezone.utc).isoformat(),
+                        "idle_seconds": round(idle, 3),
+                        "thread_id_present": bool(persisted.get("thread_id")),
+                        "live_client_present": False,
+                    }
+                )
+        rows.sort(key=lambda row: row["idle_seconds"])
+        return rows
 
     def __bool__(self) -> bool:
         """Always truthy — use `is not None` or `len()` to check emptiness."""

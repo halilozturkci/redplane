@@ -12,7 +12,7 @@ from typing import Any
 
 from .auth import API_KEY_ENV, WeakApiKeyError, api_key_from_env, check_api_key_strength
 from .config import dump_run_spec, load_run_spec
-from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_METADATA_DB
+from .constants import DEFAULT_ARTIFACT_ROOT, DEFAULT_GATEWAY_TRACE_ROOT, DEFAULT_METADATA_DB, GATEWAY_TRACE_ROOT_ENV
 from .diff import render_diff_text
 from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
@@ -144,6 +144,7 @@ def _orchestrator(args: argparse.Namespace) -> Orchestrator:
     return Orchestrator(
         artifact_root=args.artifact_root,
         metadata_db=args.metadata_db,
+        gateway_trace_root=getattr(args, "gateway_trace_root", None),
     )
 
 
@@ -429,6 +430,8 @@ def cmd_serve_api(args: argparse.Namespace) -> int:
         os.environ["URT_ARTIFACT_ROOT"] = args.artifact_root
     if args.metadata_db != DEFAULT_METADATA_DB or "URT_METADATA_DB" not in os.environ:
         os.environ["URT_METADATA_DB"] = args.metadata_db
+    if args.gateway_trace_root:
+        os.environ[GATEWAY_TRACE_ROOT_ENV] = args.gateway_trace_root
 
     uvicorn.run(
         "urt.api:create_app",
@@ -470,6 +473,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--artifact-root", default=DEFAULT_ARTIFACT_ROOT, help="Artifact output directory")
     parser.add_argument("--metadata-db", default=DEFAULT_METADATA_DB, help="Metadata sqlite path")
+    parser.add_argument(
+        "--gateway-trace-root",
+        default=None,
+        help=f"Gateway audit root read to link runs to traces (default: ${GATEWAY_TRACE_ROOT_ENV} or {DEFAULT_GATEWAY_TRACE_ROOT})",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 

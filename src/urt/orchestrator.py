@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import traceback
 import uuid
@@ -19,8 +20,10 @@ from .constants import (
     AUDIT_BUNDLE_FILES,
     BUNDLE_FORMAT_VERSION,
     DEFAULT_ARTIFACT_ROOT,
+    DEFAULT_GATEWAY_TRACE_ROOT,
     DEFAULT_METADATA_DB,
     DEFAULT_RUN_PROFILE,
+    GATEWAY_TRACE_ROOT_ENV,
     REDACTED_BUNDLE_MIN_VERSION,
     RUN_PROFILE_DEFAULTS,
     SEVERITY_ORDER,
@@ -28,6 +31,7 @@ from .constants import (
     TERMINAL_RUN_STATUSES,
 )
 from .diff import RunDiff, TrendPoint, diff_runs
+from .gateway.traces import TraceIndex
 from .jobs import current_worker_id, worker_is_alive
 from .normalization import build_scorecard, normalize_findings
 from .policy.waivers import parse_expiry, preview_matches, waiver_is_active
@@ -89,9 +93,14 @@ class Orchestrator:
         *,
         artifact_root: str = DEFAULT_ARTIFACT_ROOT,
         metadata_db: str = DEFAULT_METADATA_DB,
+        gateway_trace_root: str | None = None,
     ):
         self.artifact_store = ArtifactStore(artifact_root)
         self.metadata_store = MetadataStore(metadata_db)
+        # Read-only: the gateway owns this tree; the orchestrator only links runs to it.
+        self.gateway_traces = TraceIndex(
+            gateway_trace_root or os.environ.get(GATEWAY_TRACE_ROOT_ENV) or DEFAULT_GATEWAY_TRACE_ROOT
+        )
 
     @staticmethod
     def _utc_now() -> str:
@@ -117,9 +126,10 @@ class Orchestrator:
         )
         return run_id
 
-    def _start_run_record(self, spec: RunSpec, run_id: str | None, worker_id: str) -> tuple[str, str]:
+    def _start_run_record(self, spec: RunSpec, run_id: str | None, worker_id: str) -> tuple[str, str, str]:
         """Create the `running` row (CLI / sync path) or promote the `queued` one (worker).
-        Returns `(run_id, created_at)`. A row that is not `queued` is never executed twice."""
+        Returns `(run_id, created_at, started_at)`. A row that is not `queued` is never
+        executed twice."""
         started = self._utc_now()
         if run_id is None:
             run_id = self._new_run_id(spec)
@@ -135,14 +145,14 @@ class Orchestrator:
                     started_at=started,
                 )
             )
-            return run_id, started
+            return run_id, started, started
         row = self.metadata_store.get_run(run_id)
         if row is None:
             raise ValueError(f"Run {run_id!r} was never queued")
         if row["status"] != "queued":
             raise RuntimeError(f"Run {run_id!r} is {row['status']}, not queued; refusing to execute it again")
         self.metadata_store.update_run(run_id, status="running", updated_at=started, worker_id=worker_id, started_at=started)
-        return run_id, str(row["created_at"])
+        return run_id, str(row["created_at"]), started
 
     def execute(self, spec: RunSpec, *, run_id: str | None = None, worker_id: str | None = None) -> dict[str, Any]:
         """Execute `spec` to completion in this thread and write the audit bundle.
@@ -151,7 +161,7 @@ class Orchestrator:
         created; with one (the background worker) the previously `queued` row is
         promoted. Both paths are this one function.
         """
-        run_id, now = self._start_run_record(spec, run_id, worker_id or current_worker_id())
+        run_id, now, started_at = self._start_run_record(spec, run_id, worker_id or current_worker_id())
         # The in-memory spec holds expanded `${VAR}` credentials; nothing this run
         # writes or returns may. `store` scrubs known secret values from every write
         # (including adapter raw logs); the spec copy is additionally key-redacted.
@@ -384,13 +394,16 @@ class Orchestrator:
             # The manifest is written before the reports so the static viewer can
             # show duration, budget and probe results; report paths are deterministic.
             run_duration = perf_counter() - run_started
+            completed_at = self._utc_now()
+            gateway_link = self.gateway_traces.traces_for_run(run_id, started_at=started_at, ended_at=completed_at)
             run_manifest = {
                 "run_id": run_id,
                 "name": spec.name,
                 "run_profile": spec.run_profile,
                 "status": "completed",
                 "created_at": now,
-                "completed_at": self._utc_now(),
+                "started_at": started_at,
+                "completed_at": completed_at,
                 "duration_seconds": round(run_duration, 4),
                 "bundle_format_version": BUNDLE_FORMAT_VERSION,
                 "required_bundle_files": list(AUDIT_BUNDLE_FILES),
@@ -401,6 +414,10 @@ class Orchestrator:
                 "engine_invocation_count": len(engine_invocations),
                 "finding_count": len(normalized),
                 "budget": budget.snapshot(),
+                # Gateway traces this run produced (idea 3): exact `run_id` tags plus the
+                # weaker time-window join, each listed under its own key.
+                "gateway_traces": gateway_link,
+                "trace_ids": gateway_link["trace_ids"],
                 "report_paths": {
                     "markdown": str(run_root / "report.md"),
                     "html": str(run_root / "report.html"),
@@ -440,12 +457,14 @@ class Orchestrator:
             error_path = store.write_text(run_id, "run_error.log", error_trace)
             error_message = scrubber.scrub_text(str(exc))
             stages.record("run", "failed", message=error_message)
+            failed_at = self._utc_now()
             self.metadata_store.update_run(
                 run_id,
                 status="failed",
-                updated_at=self._utc_now(),
+                updated_at=failed_at,
                 error_message=error_message,
             )
+            gateway_link = self.gateway_traces.traces_for_run(run_id, started_at=started_at, ended_at=failed_at)
             store.write_json(
                 run_id,
                 "run_manifest.json",
@@ -455,12 +474,15 @@ class Orchestrator:
                     "run_profile": spec.run_profile,
                     "status": "failed",
                     "created_at": now,
-                    "failed_at": self._utc_now(),
+                    "started_at": started_at,
+                    "failed_at": failed_at,
                     "bundle_format_version": BUNDLE_FORMAT_VERSION,
                     "error": error_message,
                     "target_probe_results": target_probe_results,
                     "engine_invocations": engine_invocations,
                     "budget": budget.snapshot(),
+                    "gateway_traces": gateway_link,
+                    "trace_ids": gateway_link["trace_ids"],
                 },
             )
             self._write_failure_reports(run_id, store)
@@ -545,6 +567,18 @@ class Orchestrator:
             "stale": self.run_is_stale(row),
             "stage_event_count": len(events) if isinstance(events, list) else 0,
         }
+
+    def run_traces(self, run_id: str) -> dict[str, Any] | None:
+        """Gateway traces linked to a run: the manifest's `gateway_traces` (recorded at the
+        end of the run) resolved to summary rows from the trace root; None for an unknown
+        run, an empty link before the manifest exists."""
+        if not self.metadata_store.get_run(run_id):
+            return None
+        manifest = self.artifact_store.read_json(run_id, "run_manifest.json") or {}
+        link = manifest.get("gateway_traces") if isinstance(manifest.get("gateway_traces"), dict) else None
+        if link is None:
+            link = {"trace_root": str(self.gateway_traces.root), "window": None, "by_run_id": [], "by_time_window": [], "trace_ids": []}
+        return {"run_id": run_id, **link, "traces": self.gateway_traces.summaries_for(link)}
 
     def stage_events(self, run_id: str) -> list[dict[str, Any]] | None:
         """Orchestrator stage events so far; None for an unknown run, [] before it starts."""

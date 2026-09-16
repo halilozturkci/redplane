@@ -106,11 +106,31 @@ Env vars inside YAML are expanded via `${VAR}` syntax.
 Each request produces one trace artifact containing:
 
 - `trace_id`, timestamp, route source, target id, connector name.
+- `run_id` when the caller sent `X-URT-Run-Id` (or `context.run_id`). Redplane puts
+  `URT_RUN_ID` in every engine's environment; a tool that forwards it as that header
+  (the shipped `templates/promptfoo_eval.template.yaml` does) gets its traces linked to
+  the run exactly. Untagged traces are linked only by the run's time window.
 - Request path/headers/body (redacted and optionally truncated).
 - Response body + status.
 - Error payload when present.
 
-Redaction applies to standard sensitive keys and configured header list.
+Redaction applies to standard sensitive keys and configured header list. The
+`metadata.audit_path` returned to the client is **relative to `audit.artifact_root`**
+(`YYYYMMDD/trace-….json`), never the server's filesystem layout.
+
+The control plane reads this tree read-only: `Orchestrator` records the linked
+`trace_ids` (and how each matched) in `run_manifest.json` at the end of a run;
+`urt serve-api` browses it under `GET /v1/traces…` and `/ui/traces` with the gateway
+down. Point `URT_GATEWAY_TRACE_ROOT` / `--gateway-trace-root` at `audit.artifact_root`
+when it is not the default `.urt_state/gateway`.
+
+## Sessions endpoint
+
+`GET /v1/sessions` (same `gateway.api_key` gate as chat completions) lists the live
+and persisted sessions: `session_id`, `source` (`live` | `persisted`), `last_used_utc`,
+`idle_seconds`, `thread_id_present`, `live_client_present`. Never the Foundry
+`thread_id` value, the Copilot client or any message content. `urt serve-api` proxies
+it as `GET /v1/gateway/sessions` when `URT_GATEWAY_URL` (+ `URT_GATEWAY_API_KEY`) is set.
 
 ## Implementation Phases
 

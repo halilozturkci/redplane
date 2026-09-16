@@ -2,6 +2,13 @@
 
 DEFAULT_ARTIFACT_ROOT = ".urt_state/artifacts"
 DEFAULT_METADATA_DB = ".urt_state/metadata/urt.sqlite3"
+# Where `urt serve-gateway` writes traces by default (`audit.artifact_root`); the
+# control plane reads the same tree to link runs to traces and to browse them.
+DEFAULT_GATEWAY_TRACE_ROOT = ".urt_state/gateway"
+GATEWAY_TRACE_ROOT_ENV = "URT_GATEWAY_TRACE_ROOT"
+# Optional base URL of a running gateway, for the sessions view (read-only proxy).
+GATEWAY_URL_ENV = "URT_GATEWAY_URL"
+GATEWAY_API_KEY_ENV = "URT_GATEWAY_API_KEY"
 DEFAULT_RUN_PROFILE = "nightly"
 
 SUPPORTED_TARGETS = {"foundry", "copilot", "http"}

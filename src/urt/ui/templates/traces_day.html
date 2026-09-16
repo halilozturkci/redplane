@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Redplane gateway traces {{ day }}{% endblock %}
+{% block nav %}{% include "partials/_nav.html" %}{% endblock %}
+{% block content %}
+<h1>Gateway traces <span class="mono">{{ day }}</span></h1>
+<p class="note"><a href="/ui/traces">All days</a> · headers redacted and bodies truncated as stored by the gateway.</p>
+<form class="filters" method="get" action="/ui/traces/{{ day }}">
+  <label>Target
+    <select name="target_id">
+      <option value="">all</option>
+      {% for target in targets %}<option value="{{ target }}"{% if filters.target_id == target %} selected{% endif %}>{{ target }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Status code
+    <select name="status_code">
+      <option value="">all</option>
+      {% for code in status_codes %}<option value="{{ code }}"{% if filters.status_code == code|string %} selected{% endif %}>{{ code }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Run id <input type="text" name="run_id" value="{{ filters.run_id }}" class="mono" placeholder="run-…"></label>
+  <button type="submit">Apply</button>
+  <a href="/ui/traces/{{ day }}">Reset</a>
+</form>
+<p class="count">{{ rows | length }} of {{ total }} traces</p>
+{% if rows %}
+{% include "partials/_trace_rows.html" %}
+{% else %}
+<p class="muted">No traces match.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/ui/static/htmx.min.js"></script>{% endblock %}

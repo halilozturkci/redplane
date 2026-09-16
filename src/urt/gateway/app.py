@@ -87,6 +87,7 @@ class UniversalGateway:
         target_id = ""
         connector_name = ""
         route_source = ""
+        run_id: str | None = None
         error: dict[str, Any] | None = None
 
         try:
@@ -115,6 +116,7 @@ class UniversalGateway:
                     else None
                 )
             )
+            run_id = self._run_id_from(headers, request_payload)
 
             decision = self.router.resolve(path=path, headers=headers, payload=request_payload)
             target_id = decision.target_id
@@ -182,6 +184,9 @@ class UniversalGateway:
                 "route_source": route_source,
                 "latency_ms": latency_ms,
                 "status_code": status_code,
+                # Set when the attack tool forwarded `X-URT-Run-Id` (from `URT_RUN_ID` in
+                # its environment); lets the control plane join traces to the run exactly.
+                "run_id": run_id,
                 "request": {
                     "path": path,
                     "headers": headers,
@@ -196,9 +201,25 @@ class UniversalGateway:
             response_payload.setdefault("metadata", {})
             if isinstance(response_payload["metadata"], dict):
                 response_payload["metadata"].setdefault("trace_id", trace_id)
+                # Relative to the audit root, never the server's filesystem layout.
                 response_payload["metadata"].setdefault("audit_path", trace_path)
 
         return status_code, response_payload
+
+    @staticmethod
+    def _run_id_from(headers: dict[str, str], payload: dict[str, Any]) -> str | None:
+        candidate = headers.get("x-urt-run-id")
+        if not candidate and isinstance(payload.get("context"), dict):
+            candidate = payload["context"].get("run_id")
+        if not candidate:
+            return None
+        text = str(candidate).strip()
+        return text[:128] if text else None
+
+    def sessions_payload(self) -> dict[str, Any]:
+        """Live/persisted session identifiers with presence flags only (no content)."""
+        rows = self.session_store.describe()
+        return {"count": len(rows), "ttl_seconds": self.config.gateway.session_ttl_seconds, "sessions": rows}
 
     @staticmethod
     def _to_openai_response(*, result: Any, model_hint: str, messages: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -284,6 +305,13 @@ def create_http_server(gateway: UniversalGateway) -> ThreadingHTTPServer:
                 deep = str(query.get("deep", ["false"])[0]).lower() in {"1", "true", "yes", "on"}
                 payload = gateway.health_payload(deep=deep)
                 self._send_json(200, payload)
+                return
+            if parsed.path == "/v1/sessions":
+                headers = {str(key).lower(): str(value) for key, value in self.headers.items()}
+                if not _request_authorized(headers, gateway.config.gateway.api_key):
+                    self._send_json(401, {"error": "unauthorized", "message": "invalid or missing gateway API key"})
+                    return
+                self._send_json(200, gateway.sessions_payload())
                 return
             self._send_json(404, {"error": "not_found"})
 

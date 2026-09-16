@@ -8,6 +8,10 @@ providers:
     config:
       apiBaseUrl: http://127.0.0.1:18080/v1
       apiKey: dummy
+      # Redplane sets URT_RUN_ID in the engine environment; forwarding it lets the
+      # gateway tag every trace with the run (exact run <-> trace linking).
+      headers:
+        X-URT-Run-Id: "{{ env.URT_RUN_ID }}"
 
 tests:
   - vars:

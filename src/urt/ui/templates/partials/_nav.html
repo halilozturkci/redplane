@@ -4,6 +4,7 @@
   <a href="/ui/waivers{% if run_id is defined and run_id %}?run_id={{ run_id | urlencode }}{% endif %}">Waivers</a>
   <a href="/ui/diff{% if run_id is defined and run_id %}?b={{ run_id | urlencode }}{% endif %}">Diff</a>
   <a href="/ui/specs">Spec builder</a>
+  <a href="/ui/traces">Traces</a>
   {% if run_id is defined and run_id %}
   <a href="/ui/runs/{{ run_id }}">Run</a>
   <a href="/ui/runs/{{ run_id }}/findings">Findings</a>
