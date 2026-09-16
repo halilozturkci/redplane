@@ -20,6 +20,8 @@
   <strong>Run failed:</strong> {{ manifest.get("error", "see run_error.log") }}
   {% if error_log_head %}
   <details><summary>run_error.log (head)</summary><pre>{{ error_log_head }}</pre></details>
+  {% elif legacy %}
+  <div class="note">run_error.log head not shown for pre-{{ redacted_min_version }} bundles.</div>
   {% endif %}
 </div>
 {% endif %}

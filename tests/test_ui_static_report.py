@@ -84,7 +84,8 @@ def test_static_page_escapes_attacker_text_and_locks_scripts_with_a_hash_csp(ric
     assert f"style-src 'sha256-{style_digest}'" in policy
 
     # Hash CSP forbids inline handlers and style attributes; the page must not rely on them.
-    assert not re.search(r"\son[a-z]+=", html)
+    # (Match inside tags only: escaped finding text may legitimately mention "onerror=".)
+    assert not re.search(r"<[^>]*\son[a-z]+=", html)
     assert ' style="' not in html
     # Embedded data is inert JSON, never executable, and cannot close its own tag.
     data = re.search(r'<script type="application/json" id="redplane-data">(.*?)</script>', html, flags=re.S)
@@ -142,25 +143,56 @@ def test_static_page_for_a_legacy_bundle_is_redacted_and_labelled(legacy_bundle:
     assert LEGACY_SECRET not in html
     assert "1.0" in html
     assert "predates write-time redaction" in html
+    # Static mode follows the same allowlist as `urt view`: files the viewer would
+    # refuse (409) are named, not linked.
+    assert 'href="scorecard.json"' in html
+    assert 'href="findings.json"' not in html
+    assert f'href="raw/garak/{TARGET_ID}_stdout.log"' not in html
+    assert "not served for pre-1.1 bundles" in html
 
 
-def test_failed_run_page_shows_error_head_and_no_invented_numbers(orchestrator):
-    from urt.types import RunSpec
-    from conftest import PYTHON, bundle_spec
+def test_hrefs_are_percent_encoded(real_bundle: Bundle):
+    from urt.ui import build_bundle
 
-    spec = bundle_spec("broken")
-    spec["engines"] = [
-        {"name": "garak", "fail_open": False, "params": {"command": f'{PYTHON} -c "raise SystemExit(3)"'}}
-    ]
-    result = orchestrator.execute(RunSpec.from_dict(spec))
-    assert result["status"] == "failed"
-    run_dir = orchestrator.artifact_store.run_dir(result["run_id"])
+    odd = "raw/odd name#1?.log"
+    bundle = build_bundle(
+        "r",
+        scorecard={},
+        findings=[],
+        manifest={"run_id": "r", "status": "completed", "bundle_format_version": "1.1"},
+        artifacts=[{"path": odd, "size_bytes": 1, "sha256": "0" * 64}],
+    )
+    html = render_run_page(bundle, mode="static")
+    assert 'href="raw/odd%20name%231%3F.log"' in html
+    assert f'href="{odd}"' not in html
 
-    html = render_run_page(load_bundle(run_dir, waivers=[]), mode="static")
+
+def test_failed_run_page_shows_error_head_and_no_invented_numbers(failed_bundle: Bundle):
+    # A failed run still gets a report.html so the CI reviewer sees why it failed.
+    html = (failed_bundle.run_dir / "report.html").read_text(encoding="utf-8")
     assert "failed" in html
     assert "fail_open=false" in html
     assert "run_error.log" in html
+    assert "Traceback" in html
     assert "No scorecard" in html
+    index = {row["path"] for row in failed_bundle.read_json("artifacts_index.json")}
+    assert {"report.html", "run_error.log", "run_manifest.json"} <= index
+
+    rendered = render_run_page(load_bundle(failed_bundle.run_dir, waivers=[]), mode="static")
+    assert "Traceback" in rendered
+
+
+def test_legacy_failed_run_page_never_shows_the_error_log_or_manifest_error(legacy_failed_bundle: Bundle):
+    html = _static_page(legacy_failed_bundle)
+    assert LEGACY_SECRET not in html
+    assert "predates write-time redaction" in html
+    assert "failed" in html
+    # The channel is named, not silently dropped.
+    assert "not shown for pre-1.1 bundles" in html
+
+    # Re-rendering in place through the CLI path stays clean too.
+    legacy_failed_bundle.orchestrator.write_reports(legacy_failed_bundle.run_id)
+    assert LEGACY_SECRET not in (legacy_failed_bundle.run_dir / "report.html").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("mode", ["static"])

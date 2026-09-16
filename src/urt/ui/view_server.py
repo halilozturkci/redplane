@@ -1,29 +1,27 @@
 """`urt view <run_id>`: serve one run directory on loopback (Inspect `view` model).
 
-Stdlib only, no SQLite, no API. `/` is `report.html` (the self-contained viewer);
-every other path is a bundle file resolved with the same confinement rules as
-the API (`ArtifactStore.resolve_artifact`), served with the same media-type and
-header policy, and subject to the same pre-1.1 allowlist: a legacy bundle may
-hold expanded credentials, so only aggregates and rendered reports are served.
+Stdlib only, no SQLite, no API. `/` is `report.html` (the self-contained viewer,
+the only file rendered inline as HTML); every other path is a bundle file
+resolved with the same confinement rules as the API (`ArtifactStore.resolve_artifact`),
+served under the same `artifact_policy` (text inline under a sandboxing CSP, any
+other `.html` and binaries as attachments), and subject to the same pre-1.1
+allowlist: a legacy bundle may hold expanded credentials, so only aggregates and
+rendered reports are served.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import socket
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from ..constants import (
-    ARTIFACT_ATTACHMENT_MEDIA_TYPES,
-    ARTIFACT_INLINE_MEDIA_TYPES,
-    ARTIFACT_RESPONSE_HEADERS,
-    LEGACY_RAW_DOWNLOAD_ALLOWLIST,
-    REDACTED_BUNDLE_MIN_VERSION,
-)
+from ..artifact_policy import artifact_response_policy, is_viewer_file
+from ..constants import LEGACY_RAW_DOWNLOAD_ALLOWLIST, REDACTED_BUNDLE_MIN_VERSION
 from ..storage.artifact_store import ArtifactPathError, ArtifactStore
 
 LOOPBACK_NAMES = {"localhost", "ip6-localhost", "ip6-loopback"}
@@ -32,6 +30,21 @@ VIEWER_HEADERS = {
     "Cache-Control": "no-store",
     "Referrer-Policy": "no-referrer",
 }
+# Fallback for a report.html rendered before the viewer existed (no CSP meta, inline
+# style only, no script).
+LEGACY_REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'"
+_CSP_META = re.compile(rb'<meta http-equiv="Content-Security-Policy" content="([^"]*)"', re.I)
+
+
+def viewer_csp_header(page: bytes) -> str:
+    """The page's own CSP meta as a response header, plus `frame-ancestors 'none'`.
+
+    The hashes in the meta belong to the inline script/style of *that* file, so
+    they are read from it rather than recomputed from the current package assets.
+    """
+    match = _CSP_META.search(page)
+    policy = match.group(1).decode("utf-8", errors="replace") if match else LEGACY_REPORT_CSP
+    return f"{policy}; frame-ancestors 'none'"
 
 
 class LoopbackOnlyError(ValueError):
@@ -100,7 +113,7 @@ class RunDirHandler(BaseHTTPRequestHandler):
         except FileNotFoundError:
             self._text(HTTPStatus.NOT_FOUND, "Not found")
             return
-        self._file(path)
+        self._file(path, relative)
 
     def do_HEAD(self) -> None:  # noqa: N802
         self.do_GET()
@@ -116,22 +129,23 @@ class RunDirHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _file(self, path: Path) -> None:
-        suffix = path.suffix.lower()
+    def _file(self, path: Path, relative: str) -> None:
         payload = path.read_bytes()
         self.send_response(HTTPStatus.OK)
-        if suffix == ".html":
-            # The viewer itself: rendered by us, escaped, carrying its own CSP meta.
+        if is_viewer_file(relative):
+            # The one file rendered by us: inline, with its own CSP meta echoed as a
+            # header (plus frame-ancestors, which a meta tag cannot express).
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            headers = VIEWER_HEADERS
-        elif suffix in ARTIFACT_INLINE_MEDIA_TYPES:
-            self.send_header("Content-Type", ARTIFACT_INLINE_MEDIA_TYPES[suffix])
-            headers = ARTIFACT_RESPONSE_HEADERS
+            headers = {**VIEWER_HEADERS, "Content-Security-Policy": viewer_csp_header(payload)}
         else:
-            media = ARTIFACT_ATTACHMENT_MEDIA_TYPES.get(suffix, "application/octet-stream")
-            self.send_header("Content-Type", media)
-            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
-            headers = ARTIFACT_RESPONSE_HEADERS
+            # Every other file — including any other .html under raw/ — follows the
+            # API policy: text inline under a sandboxing CSP, the rest as attachments.
+            policy = artifact_response_policy(relative)
+            self.send_header("Content-Type", policy.media_type)
+            disposition = policy.content_disposition
+            if disposition:
+                self.send_header("Content-Disposition", disposition)
+            headers = policy.headers
         self.send_header("Content-Length", str(len(payload)))
         for key, value in headers.items():
             self.send_header(key, value)

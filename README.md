@@ -1265,11 +1265,18 @@ meta pins the page's own inline script and stylesheet by sha256 — no
 redacted at read time and the page says so in a banner.
 
 `urt view <run_id>` serves the run directory at `http://127.0.0.1:8765/`
-(`/` is `report.html`) with the API's artifact rules: paths are confined to the
-run directory, text files are inline with `nosniff` + `default-src 'none'; sandbox`,
-everything else is an attachment, and for pre-1.1 bundles only the allowlisted
-aggregates are served (`409` otherwise). It binds loopback only; there is no flag
-to change that — use an SSH tunnel.
+(`/` is `report.html`, the only file rendered inline as HTML, with its CSP meta
+echoed as a response header) with the API's artifact rules (`src/urt/artifact_policy.py`):
+paths are confined to the run directory, text files are inline with `nosniff` +
+`default-src 'none'; sandbox`, everything else — including any other `.html` a
+tool left under `raw/` — is a `Content-Disposition: attachment` download, and for
+pre-1.1 bundles only the allowlisted aggregates are served (`409` otherwise; the
+page does not link the rest). It binds loopback only; there is no flag to change
+that — use an SSH tunnel.
+
+Failed runs get a `report.html` too (manifest error, `run_error.log` head, no
+invented counts). For pre-1.1 bundles the error text and log head are withheld
+from the page, since 1.0 never scrubbed argv out of them.
 
 `findings.json` record shape:
 

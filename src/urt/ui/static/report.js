@@ -104,8 +104,13 @@
     // Deep link: #finding=<id> opens that finding.
     var hash = window.location.hash;
     if (hash.indexOf("#finding=") === 0) {
-      var wanted = decodeURIComponent(hash.slice("#finding=".length));
-      var node = document.querySelector('details.finding[data-finding-id="' + cssEscape(wanted) + '"]');
+    var wanted;
+    try {
+      wanted = decodeURIComponent(hash.slice("#finding=".length));
+    } catch (err) {
+      return; // malformed hash: ignore, keep the page interactive
+    }
+    var node = document.querySelector('details.finding[data-finding-id="' + cssEscape(wanted) + '"]');
       if (node) { node.open = true; node.scrollIntoView(); }
     }
     applyFilters();

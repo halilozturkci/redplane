@@ -17,9 +17,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
+from .artifact_policy import artifact_response_policy
 from .constants import (
-    ARTIFACT_ATTACHMENT_MEDIA_TYPES,
-    ARTIFACT_INLINE_MEDIA_TYPES,
     ARTIFACT_RESPONSE_HEADERS,
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_METADATA_DB,
@@ -39,23 +38,19 @@ BUNDLE_JSON_ENDPOINTS = {
     "invocations": "engine_invocations.json",
 }
 
-# Kept as module names for existing importers; the policy lives in `constants`.
-INLINE_MEDIA_TYPES = ARTIFACT_INLINE_MEDIA_TYPES
-ATTACHMENT_MEDIA_TYPES = ARTIFACT_ATTACHMENT_MEDIA_TYPES
 _ARTIFACT_HEADERS = ARTIFACT_RESPONSE_HEADERS
 
 
 def _artifact_response(path: Path, relative_path: str) -> FileResponse:
-    suffix = path.suffix.lower()
-    headers = dict(_ARTIFACT_HEADERS)
-    if suffix in INLINE_MEDIA_TYPES:
-        return FileResponse(path, media_type=INLINE_MEDIA_TYPES[suffix], headers=headers)
-    media_type = ATTACHMENT_MEDIA_TYPES.get(suffix, "application/octet-stream")
+    # The API never renders the viewer inline: same-origin as the JSON API.
+    policy = artifact_response_policy(relative_path)
+    if policy.inline:
+        return FileResponse(path, media_type=policy.media_type, headers=policy.headers)
     return FileResponse(
         path,
-        media_type=media_type,
-        headers=headers,
-        filename=Path(relative_path).name,
+        media_type=policy.media_type,
+        headers=policy.headers,
+        filename=policy.filename,
         content_disposition_type="attachment",
     )
 

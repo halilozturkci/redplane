@@ -18,6 +18,7 @@ import json
 from collections.abc import Callable
 from importlib import resources
 from typing import Any, Literal
+from urllib.parse import quote
 
 from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
 from markupsafe import Markup
@@ -116,23 +117,30 @@ SERVED_CSP = (
 )
 
 
+def _servable(bundle: RunBundle, relative_path: str) -> bool:
+    # Pre-1.1 bundles may hold expanded credentials; `urt view` and the API refuse
+    # everything but the allowlisted aggregates, so the page does not link them.
+    return not bundle.legacy or relative_path in LEGACY_RAW_DOWNLOAD_ALLOWLIST
+
+
 def relative_href(bundle: RunBundle) -> HrefFor:
     """Static mode: links are relative to the run directory the page sits in."""
 
     def href(relative_path: str) -> str | None:
-        return relative_path
+        if not _servable(bundle, relative_path):
+            return None
+        return quote(relative_path, safe="/")
 
     return href
 
 
 def api_href(bundle: RunBundle, *, prefix: str = "/v1/runs") -> HrefFor:
-    """Served mode: files come through the artifact API, which refuses non-allowlisted
-    files of pre-1.1 bundles — so those are not linked at all."""
+    """Served mode: files come through the artifact API."""
 
     def href(relative_path: str) -> str | None:
-        if bundle.legacy and relative_path not in LEGACY_RAW_DOWNLOAD_ALLOWLIST:
+        if not _servable(bundle, relative_path):
             return None
-        return f"{prefix}/{bundle.run_id}/artifacts/{relative_path}"
+        return f"{prefix}/{quote(bundle.run_id, safe='')}/artifacts/{quote(relative_path, safe='/')}"
 
     return href
 

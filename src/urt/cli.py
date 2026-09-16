@@ -15,6 +15,7 @@ from .engine_pins import pin
 from .powercat_kit import DEFAULT_COMMAND
 from .orchestrator import Orchestrator
 from .redaction import Scrubber, redact_run_spec_payload, redact_target_payload
+from .storage.artifact_store import ArtifactPathError, ArtifactStore
 from .report import GateResult, gate_result, load_findings, render_csv, render_markdown
 from .gateway import load_gateway_config, serve_gateway
 from .gateway.config import GatewayConfigError
@@ -171,20 +172,23 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(f"Run not found: {args.run_id}", file=sys.stderr)
         return 1
 
-    scorecard_path = run.get("scorecard_path")
-    findings_path = run.get("findings_path")
-    if not scorecard_path or not findings_path:
-        print("Run does not contain scorecard/findings paths yet", file=sys.stderr)
-        return 1
     run_dir = orchestrator.artifact_store.existing_run_dir(args.run_id)
     if run_dir is None:
         print(f"Run directory not found for {args.run_id}", file=sys.stderr)
         return 1
 
     if args.in_place:
+        # Works for failed runs too: the viewer renders the manifest error and
+        # run_error.log head when there is no scorecard.
         orchestrator.write_reports(args.run_id)
         print(f"Report bundle refreshed in {run_dir}")
         return 0
+
+    scorecard_path = run.get("scorecard_path")
+    findings_path = run.get("findings_path")
+    if not scorecard_path or not findings_path:
+        print("Run does not contain scorecard/findings paths yet; use --in-place for failed runs", file=sys.stderr)
+        return 1
 
     scorecard = json.loads(Path(scorecard_path).read_text(encoding="utf-8"))
     findings = json.loads(Path(findings_path).read_text(encoding="utf-8"))
@@ -341,9 +345,13 @@ def _serve_view(server) -> None:
 
 
 def cmd_view(args: argparse.Namespace) -> int:
-    run_dir = Path(args.artifact_root) / args.run_id
-    if "/" in args.run_id or "\\" in args.run_id or not run_dir.is_dir():
-        print(f"Run directory not found: {run_dir}", file=sys.stderr)
+    # Same run-id rules the server applies to every request (no separators, no "..").
+    try:
+        run_dir = ArtifactStore(args.artifact_root).existing_run_dir(args.run_id)
+    except ArtifactPathError:
+        run_dir = None
+    if run_dir is None:
+        print(f"Run directory not found: {Path(args.artifact_root) / args.run_id}", file=sys.stderr)
         return 1
     try:
         server = build_view_server(run_dir, host=args.host, port=args.port)
