@@ -222,7 +222,7 @@ def mount_ui(app: FastAPI, orch: Orchestrator) -> None:
         fields = await read_form(request)
         verify_csrf(request, fields.get(CSRF_FIELD))
         response = RedirectResponse("/ui/login", status_code=303, headers=PAGE_HEADERS)
-        clear_session_cookie(response)
+        clear_session_cookie(response, request=request)
         return response
 
     # --- diff and trend (§4.5) ---

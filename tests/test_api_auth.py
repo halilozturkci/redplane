@@ -90,6 +90,44 @@ def test_ui_login_sets_httponly_cookie_and_protects_pages(client: TestClient, ri
     assert client.get("/ui", follow_redirects=False).status_code == 303
 
 
+def test_logout_invalidates_the_session_server_side(client: TestClient, rich_bundle: Bundle):
+    """A captured cookie must stop working at logout, not only at Max-Age or restart."""
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/login").text).group(1)
+    client.post("/ui/login", data={"api_key": KEY, "next": "/ui", "csrf_token": token}, follow_redirects=False)
+    captured = client.cookies.get(SESSION_COOKIE)
+    assert session_is_valid(captured, KEY)
+    assert client.get("/ui", follow_redirects=False).status_code == 200
+
+    bound = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui").text).group(1)
+    assert client.post("/ui/logout", data={"csrf_token": bound}, headers={"Origin": "http://testserver"}, follow_redirects=False).status_code == 303
+
+    # Replay the captured value (as an attacker who copied it would).
+    assert not session_is_valid(captured, KEY)
+    client.cookies.set(SESSION_COOKIE, captured)
+    replay = client.get("/ui", follow_redirects=False)
+    assert replay.status_code == 303
+    assert replay.headers["location"].startswith("/ui/login")
+    assert client.get(f"/v1/runs/{rich_bundle.run_id}/scorecard").status_code == 401
+
+    # A fresh login still works; only the revoked session is dead.
+    client.cookies.delete(SESSION_COOKIE)
+    token = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/ui/login").text).group(1)
+    client.post("/ui/login", data={"api_key": KEY, "next": "/ui", "csrf_token": token}, follow_redirects=False)
+    assert client.cookies.get(SESSION_COOKIE) != captured
+    assert client.get("/ui", follow_redirects=False).status_code == 200
+
+
+def test_revoked_session_set_is_bounded(monkeypatch):
+    """The denylist cannot grow without bound: entries older than Max-Age are dropped."""
+    old = issue_session_token(KEY, now=1_000_000)
+    auth.revoke_session(old)
+    assert not session_is_valid(old, KEY, now=1_000_100)
+    fresh = issue_session_token(KEY)
+    auth.revoke_session(fresh, now=1_000_000 + auth.SESSION_MAX_AGE_SECONDS + 10)
+    assert old.split(".")[1] not in auth._REVOKED_NONCES  # pruned: it could not validate anyway
+    assert fresh.split(".")[1] in auth._REVOKED_NONCES
+
+
 def test_forged_session_cookie_is_rejected(client: TestClient):
     client.cookies.set(SESSION_COOKIE, "0" * 64)
     assert client.get("/ui", follow_redirects=False).status_code == 303

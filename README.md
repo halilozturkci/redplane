@@ -1415,7 +1415,7 @@ keys shorter than 16 characters are refused at startup. When it is set, `/v1/*` 
 redirects to `/ui/login`, where the operator types the key once; the browser then
 holds an `HttpOnly; SameSite=Strict` session cookie whose value is
 `<issued_at>.<nonce>.<HMAC(key + per-process secret)>` — never the key, different on
-every login, `Max-Age` 12 h, and invalidated for everyone by a server restart. It also
+every login, `Max-Age` 12 h, revoked server-side by "Sign out" (a captured copy stops working at logout), and invalidated for everyone by a server restart. It also
 lets the pages follow `GET` links into `/v1/…` — writes to the JSON API still need the
 bearer header. Every request that offers a *wrong* credential (bad bearer, bad login,
 forged cookie) is answered after a constant 0.5 s delay. `/healthz`, `/ui/static/*` and

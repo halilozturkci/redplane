@@ -9,8 +9,10 @@ stated non-goal). When the key is set:
   sets after the operator types the key into a form. The cookie value is
   `<issued_at>.<nonce>.<HMAC-SHA256(key || per-process secret, issued_at.nonce)>`: it never
   carries the key, every login issues a different value, a server restart
-  invalidates all outstanding cookies (fresh process secret) and `Max-Age` /
-  `SESSION_MAX_AGE_SECONDS` bound a captured one. It is `HttpOnly; SameSite=Strict`.
+  invalidates all outstanding cookies (fresh process secret), `POST /ui/logout`
+  revokes the nonce server-side (a captured copy stops working at logout), and
+  `Max-Age` / `SESSION_MAX_AGE_SECONDS` bound one that was never logged out. It is
+  `HttpOnly; SameSite=Strict`.
 - The session cookie also authenticates **safe** (`GET`/`HEAD`) requests to
   `/v1/*`, so evidence and JSON links on the pages keep working in a browser.
   Writes to the JSON API still need the bearer header.
@@ -82,14 +84,41 @@ def issue_session_token(api_key: str, *, now: float | None = None) -> str:
     return f"{issued_at}.{nonce}.{_session_mac(api_key, issued_at, nonce)}"
 
 
-def session_is_valid(token: str | None, api_key: str, *, now: float | None = None) -> bool:
+# Sessions revoked by `POST /ui/logout`: nonce -> issued_at. In-process like the
+# secret that signs them (a restart invalidates everything anyway); pruned of entries
+# older than SESSION_MAX_AGE_SECONDS, which could no longer validate regardless.
+_REVOKED_NONCES: dict[str, int] = {}
+
+
+def _split_token(token: str | None) -> tuple[int, str, str] | None:
     parts = (token or "").split(".")
     if len(parts) != 3 or not parts[0].isdigit():
+        return None
+    return int(parts[0]), parts[1], parts[2]
+
+
+def revoke_session(token: str | None, *, now: float | None = None) -> None:
+    """Server-side logout: the token's nonce is refused from now on."""
+    current = int(time.time() if now is None else now)
+    for nonce, issued_at in list(_REVOKED_NONCES.items()):
+        if current - issued_at > SESSION_MAX_AGE_SECONDS:
+            del _REVOKED_NONCES[nonce]
+    parsed = _split_token(token)
+    if parsed is None:
+        return
+    issued_at, nonce, _ = parsed
+    _REVOKED_NONCES[nonce] = issued_at
+
+
+def session_is_valid(token: str | None, api_key: str, *, now: float | None = None) -> bool:
+    parsed = _split_token(token)
+    if parsed is None:
         return False
-    issued_text, nonce, mac = parts
-    issued_at = int(issued_text)
+    issued_at, nonce, mac = parsed
     current = time.time() if now is None else now
     if issued_at > current or current - issued_at > SESSION_MAX_AGE_SECONDS:
+        return False
+    if nonce in _REVOKED_NONCES:
         return False
     return hmac.compare_digest(mac, _session_mac(api_key, issued_at, nonce))
 
@@ -162,7 +191,11 @@ def set_session_cookie(response: Response, api_key: str, *, secure: bool = False
     )
 
 
-def clear_session_cookie(response: Response) -> None:
+def clear_session_cookie(response: Response, *, request: Request | None = None) -> None:
+    """Delete the client cookie and revoke the session it carried, so a copy of the
+    value made before logout fails `session_is_valid` from here on."""
+    if request is not None:
+        revoke_session(request.cookies.get(SESSION_COOKIE))
     response.delete_cookie(SESSION_COOKIE, path="/")
 
 
