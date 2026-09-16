@@ -302,11 +302,11 @@ def cmd_serve_api(args: argparse.Namespace) -> int:
         return 1
 
     uvicorn.run(
-        "urt.api:app",
+        "urt.api:create_app",
         host=args.host,
         port=args.port,
         reload=args.reload,
-        factory=False,
+        factory=True,
     )
     return 0
 
