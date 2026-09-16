@@ -1209,6 +1209,14 @@ Canonical files:
 - `report.html`
 - `report.csv`
 
+Bundle format version (`run_manifest.json.bundle_format_version`) is `1.1`:
+`resolved_spec.json` and `run_manifest.json` are written with every target `auth`
+value and any key matching `*token*`, `*secret*`, `*password*`, `api_key`,
+`authorization` replaced by `***REDACTED***`. Expanded `${VAR}` credentials never
+reach the bundle. `urt validate` and `urt serve-gateway --print-effective-config`
+print the same redacted view. Bundles written before `1.1` (`1.0`) may contain
+expanded credentials; treat them as sensitive.
+
 Raw engine logs/artifacts:
 - `raw/<engine>/<target_id>_stdout.log`
 - `raw/<engine>/<target_id>_stderr.log`
