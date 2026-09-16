@@ -14,9 +14,13 @@ from typing import Any
 from ..constants import SUPPORTED_EVALUATORS
 from ..types import UnifiedFinding
 
-FINDING_KINDS = ("attack", "coverage_gap", "execution", "eval")
+FINDING_KINDS = ("attack", "coverage_gap", "execution", "eval", "signal")
 ASR_KINDS = frozenset({"attack"})
 PLATFORM_ENGINE = "platform"
+# Idea 4: tenant/governance observations (Power CAT `governance_scan`, PowerPwn
+# `recon_signal`) describe configuration, not a prompt that succeeded against the
+# model; they are findings, but not attacks, so they never move ASR.
+SIGNAL_ATTACK_VECTORS = frozenset({"governance_scan", "recon_signal"})
 
 
 def _fields(finding: UnifiedFinding | dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +47,8 @@ def derive_finding_kind(finding: UnifiedFinding | dict[str, Any]) -> str:
         return "coverage_gap"
     if category == "execution" or attack_vector == "tool_runtime" or engine == PLATFORM_ENGINE:
         return "execution"
+    if attack_vector in SIGNAL_ATTACK_VECTORS:
+        return "signal"
     if engine in SUPPORTED_EVALUATORS or attack_vector == "n/a":
         return "eval"
     return "attack"

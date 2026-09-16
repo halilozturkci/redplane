@@ -36,7 +36,7 @@ FRAMEWORK_LABELS = {
 MATRIX_NOTE = (
     "Mappings are category-level heuristics (policy/mapping.py), not per-test verdicts. "
     "An empty cell means no finding mapped there, not that the control is covered or safe. "
-    "Only attack findings count; coverage_gap, execution and eval findings are excluded."
+    "Only attack findings count; coverage_gap, execution, eval and signal findings are excluded."
 )
 _ = FINDING_KINDS  # re-exported for templates/tests that enumerate kinds
 ERROR_LOG_HEAD_LINES = 40

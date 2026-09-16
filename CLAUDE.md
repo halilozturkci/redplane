@@ -60,7 +60,7 @@ RunSpec → Orchestrator.execute()
 - `ui/` — viewer: `bundle.py` (`load_bundle()` → `RunBundle`: read-time redaction for pre-1.1 bundles, evidence paths, waiver matching, transcripts), `render.py` (Jinja2 templates, `render_run_page(mode="static"|"served")`, hash CSP), `view_server.py` (`urt view`), `templates/`, `static/`
 - `artifact_policy.py` — inline-vs-attachment and header rules for serving bundle files (shared by the API and `urt view`)
 - `storage/` — `ArtifactStore` (filesystem, writes to `.urt_state/artifacts/<run_id>/`) + `MetadataStore` (SQLite)
-- `policy/mapping.py` — Maps findings to OWASP LLM / OWASP Agentic / MITRE ATLAS frameworks; `CATEGORY_ALIASES` / `canonical_category()` fold engine spellings (`hateunfairness`, `jailbreak`, `pii`, …) onto the map keys
+- `policy/mapping.py` — Maps findings to OWASP LLM / OWASP Agentic / MITRE ATLAS frameworks; `CATEGORY_ALIASES` / `canonical_category()` fold engine spellings (`hateunfairness`, `jailbreak`, `pii`, …) onto the map keys; `diff.finding_identity()` and `waivers.control_matches()` compare through it so pre-alias bundles and waivers stay comparable
 - `policy/waivers.py` — Active waiver matching used by `urt gate`; `preview_matches()` backs the waiver preview (never reimplement `control_matches()` client-side)
 - `ui/csrf.py`, `ui/forms.py` — double-submit CSRF and stdlib urlencoded form parsing for the `/ui` waiver forms (the only UI mutation)
 

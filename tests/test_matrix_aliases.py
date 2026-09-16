@@ -116,10 +116,59 @@ def test_coverage_endpoint_and_matrix_page_are_honest_about_heuristics(rich_bund
     assert "some_new_probe_family" in rows["unmapped"]["cells"][TARGET_ID]["categories"]
     assert "some_new_probe_family" in body["unmapped_categories"]
     assert "hate_unfairness" not in body["unmapped_categories"]
-    assert body["excluded_kinds"] == ["coverage_gap", "eval", "execution"]
+    assert body["excluded_kinds"] == ["coverage_gap", "eval", "execution", "signal"]
     assert client.get("/v1/runs/nope/coverage").status_code == 404
 
     page = client.get(f"/ui/runs/{run_id}").text
     assert "category-level heuristics" in page
     assert '<tr class="unmapped">' in page
     assert "some_new_probe_family" in page
+
+
+def test_diff_identity_and_waivers_follow_category_aliases():
+    """M4: a pre-alias bundle spelled `hateunfairness`; the same finding in a new run is
+    `hate_unfairness`. The diff must call that persisting, and a waiver stored with the
+    old spelling must still match the new run (and vice versa)."""
+    from urt.diff import diff_runs, finding_identity
+    from urt.policy.waivers import control_matches, matching_waiver
+
+    old = _finding("a:1", "hateunfairness", engine="pyrit", sub="hate")
+    new = _finding("b:1", "hate_unfairness", engine="pyrit", sub="hate")
+    assert finding_identity(old) == finding_identity(new) == "hate_unfairness|hate|t1"
+
+    old_scorecard = {"asr_by_category": {"hateunfairness": 1.0}}
+    new_scorecard = {"asr_by_category": {"hate_unfairness": 0.0}}
+    diff = diff_runs("a", [old], old_scorecard, "b", [new], new_scorecard)
+    assert [g.key for g in diff.persisting] == ["hate_unfairness|hate|t1"]
+    assert diff.new == [] and diff.resolved == []
+    assert diff.persisting[0].category == "hate_unfairness"
+    # ASR by category is recomputed from the findings under canonical keys, not read from
+    # the stored scorecards (whose keys carry the old spelling).
+    assert set(diff.asr_by_category_delta) == {"hate_unfairness"}
+    assert diff.asr_by_category_delta["hate_unfairness"] == {"a": 1.0, "b": 1.0, "delta": 0.0}
+
+    future = "2099-01-01T00:00:00+00:00"
+    assert control_matches(new, "hateunfairness")
+    assert control_matches(old, "hate_unfairness")
+    assert control_matches(new, "Hate-Unfairness")
+    assert not control_matches(new, "hate_speech")
+    legacy_waiver = {"waiver_id": "w", "target_id": "*", "control_id": "hateunfairness", "expires_at": future}
+    assert matching_waiver(new, [legacy_waiver]) is legacy_waiver
+
+
+def test_governance_and_recon_signals_are_not_attacks():
+    """Idea 4: Power CAT `governance_scan` and PowerPwn `recon_signal` findings describe the
+    tenant, not a successful attack; they get the `signal` kind and stay out of ASR."""
+    from urt.normalization.kind import ASR_KINDS, FINDING_KINDS, derive_finding_kind
+
+    assert "signal" in FINDING_KINDS and "signal" not in ASR_KINDS
+    governance = _finding("g", "misconfiguration", engine="powercat", attack_vector="governance_scan", sub="dlp_policy")
+    recon = _finding("r", "misconfiguration", engine="powerpwn", attack_vector="recon_signal", sub="connector")
+    attack = _finding("a", "prompt_injection", engine="pyrit", attack_vector="prompt")
+    assert derive_finding_kind(governance) == "signal"
+    assert derive_finding_kind(recon) == "signal"
+    assert derive_finding_kind(attack) == "attack"
+
+    score = build_scorecard("r", normalize_findings([governance, recon, attack], policy_profiles=["owasp_llm"]))
+    assert score.total_attacks == 1 and score.success_count == 1
+    assert score.total_findings == 3

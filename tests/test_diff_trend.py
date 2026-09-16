@@ -51,7 +51,7 @@ def test_diff_runs_classifies_new_resolved_persisting_and_deltas():
         _finding("a:3", "robustness", "bypass", "low"),
     ]
     findings_b = [
-        _finding("b:1", "prompt_injection", "dan", "critical"),
+        _finding("b:1", "prompt_injection", "dan", "critical", success=False),
         _finding("b:2", "data_exfiltration", "leak", "high"),
     ]
     scorecard_a = {
@@ -80,8 +80,10 @@ def test_diff_runs_classifies_new_resolved_persisting_and_deltas():
 
     assert diff.scorecard_delta["asr_overall"] == {"a": 1.0, "b": 0.5, "delta": -0.5}
     assert diff.scorecard_delta["critical"] == {"a": 0, "b": 1, "delta": 1}
+    # ASR by category is recomputed from the findings (canonical keys), not copied from the scorecards.
     assert diff.asr_by_category_delta["robustness"] == {"a": 1.0, "b": None, "delta": None}
-    assert diff.asr_by_category_delta["prompt_injection"]["delta"] == -0.5
+    assert diff.asr_by_category_delta["prompt_injection"] == {"a": 1.0, "b": 0.0, "delta": -1.0}
+    assert diff.asr_by_category_delta["data_exfiltration"] == {"a": None, "b": 1.0, "delta": None}
     assert diff.eval_delta["toxicity"] == {"a": 0.7, "b": 0.9, "delta": 0.2}
     assert diff.eval_delta["relevancy"] == {"a": 0.8, "b": None, "delta": None}
     assert diff.summary == {"new": 1, "resolved": 1, "persisting": 1}

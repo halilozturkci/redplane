@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .constants import SEVERITY_ORDER
+from .normalization.kind import ASR_KINDS, finding_kind
+from .policy.mapping import canonical_category
 from .types import UnifiedFinding
 
 IDENTITY_FIELDS = ("category", "sub_category", "target_id")
@@ -53,11 +55,29 @@ def comparable_runs(rows: list[dict[str, Any]], anchor: dict[str, Any]) -> list[
 
 
 def finding_identity(finding: UnifiedFinding | dict[str, Any]) -> str:
+    """`canonical_category|sub_category|target_id` — the category goes through the alias
+    table so a bundle written before the aliases (`hateunfairness`) and one written
+    after (`hate_unfairness`) describe the same issue."""
     if isinstance(finding, UnifiedFinding):
-        values = (finding.category, finding.sub_category or "", finding.target_id)
+        values = (canonical_category(finding.category), finding.sub_category or "", finding.target_id)
     else:
-        values = (str(finding.get("category", "")), str(finding.get("sub_category") or ""), str(finding.get("target_id", "")))
+        values = (
+            canonical_category(str(finding.get("category", ""))),
+            str(finding.get("sub_category") or ""),
+            str(finding.get("target_id", "")),
+        )
     return "|".join(str(v) for v in values)
+
+
+def asr_by_canonical_category(findings: list[UnifiedFinding]) -> dict[str, float]:
+    """ASR per canonical category, recomputed from the findings with the scorecard's own
+    rule (attack-kind findings only) so both sides of a diff share one key space."""
+    flags: dict[str, list[bool]] = {}
+    for finding in findings:
+        if finding_kind(finding) not in ASR_KINDS:
+            continue
+        flags.setdefault(canonical_category(finding.category), []).append(finding.success)
+    return {key: sum(1 for ok in values if ok) / len(values) for key, values in flags.items() if values}
 
 
 def _max_severity(findings: list[UnifiedFinding]) -> str | None:
@@ -201,7 +221,7 @@ def diff_runs(
         sample = (in_b or in_a)[0]
         group = DiffGroup(
             key=key,
-            category=sample.category,
+            category=canonical_category(sample.category),
             sub_category=sample.sub_category or "",
             target_id=sample.target_id,
             count_a=len(in_a),
@@ -228,7 +248,7 @@ def diff_runs(
         resolved=resolved,
         persisting=persisting,
         scorecard_delta={key: _delta(left.get(key), right.get(key)) for key in SCORECARD_DELTA_KEYS},
-        asr_by_category_delta=_keyed_delta(left.get("asr_by_category"), right.get("asr_by_category")),
+        asr_by_category_delta=_keyed_delta(asr_by_canonical_category(findings_a), asr_by_canonical_category(findings_b)),
         eval_delta=_keyed_delta(left.get("eval_scores"), right.get("eval_scores")),
     )
 

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..types import UnifiedFinding, WaiverRecord
+from .mapping import canonical_category
 
 
 def parse_expiry(raw: str) -> datetime | None:
@@ -57,7 +58,10 @@ def control_matches(finding: UnifiedFinding, control_id: str) -> bool:
             return True
         if text.startswith(f"{needle} ") or text.startswith(f"{needle}:"):
             return True
-    return False
+    # Category aliases: a waiver written as `hateunfairness` before the alias table
+    # existed must keep matching runs whose category is now `hate_unfairness`, and
+    # a canonical waiver must match an old bundle's engine spelling.
+    return canonical_category(needle) == canonical_category(finding.category)
 
 
 def target_matches(finding: UnifiedFinding, target_id: str) -> bool:
